@@ -1,0 +1,49 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode user state
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Build products
+build/
+Build/
+DerivedData/
+*.xcarchive
+*.xcresult
+*.ipa
+*.dSYM/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# CocoaPods / Carthage
+Pods/
+Carthage/Build/
+
+# Fastlane generated output
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+
+# Signing material and local configs
+*.mobileprovision
+*.provisionprofile
+*.cer
+*.p12
+*.p8
+*.pem
+*.key
+*.env
+*.xcconfig.local
+Local.xcconfig
+
+# Local reference projects, not part of the app target
+Другие проекты/

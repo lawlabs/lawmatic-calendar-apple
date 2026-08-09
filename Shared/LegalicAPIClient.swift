@@ -7,6 +7,7 @@ struct LegalicTaskImport: Sendable {
     let endDate: Date
     let isAllDay: Bool
     let notes: String
+    let updatedAt: Date
 }
 
 enum LegalicAPIError: LocalizedError {
@@ -38,6 +39,7 @@ actor LegalicAPIClient {
 
     private var cachedAccessToken: String?
     private var tokenExpiresAt: Date?
+    private var tokenCacheKey: String?
 
     private let urlSession: URLSession
 
@@ -48,6 +50,11 @@ actor LegalicAPIClient {
     func invalidateToken() {
         cachedAccessToken = nil
         tokenExpiresAt = nil
+        tokenCacheKey = nil
+    }
+
+    func validateCredentials(baseURL: URL, apiKey: String, apiSecret: String) async throws {
+        _ = try await requestAccessToken(baseURL: baseURL, apiKey: apiKey, apiSecret: apiSecret)
     }
 
     func fetchTasks(
@@ -63,7 +70,6 @@ actor LegalicAPIClient {
         LegalicLogger.line("fetchTasks: tasksURL (без пагинации в логе — см. GET ниже)=\(tasksURL.absoluteString)")
         LegalicLogger.line("fetchTasks: apiKey=\(LegalicLogger.maskedApiKey(apiKey))")
         LegalicLogger.line("fetchTasks: maxPages=\(maxPages) perPage=\(perPage)")
-        invalidateToken()
         let token = try await requestAccessToken(baseURL: baseURL, apiKey: apiKey, apiSecret: apiSecret)
         LegalicLogger.line("fetchTasks: токен получен, префикс \(LegalicLogger.maskedTokenPrefix(token))")
 
@@ -98,7 +104,11 @@ actor LegalicAPIClient {
     }
 
     private func requestAccessToken(baseURL: URL, apiKey: String, apiSecret: String) async throws -> String {
-        if let cachedAccessToken, let tokenExpiresAt, Date() < tokenExpiresAt.addingTimeInterval(-60) {
+        let requestedCacheKey = "\(baseURL.absoluteString)|\(apiKey)|\(apiSecret)"
+        if let cachedAccessToken,
+           let tokenExpiresAt,
+           tokenCacheKey == requestedCacheKey,
+           Date() < tokenExpiresAt.addingTimeInterval(-60) {
             LegalicLogger.line("requestAccessToken: используем кэш токена до \(tokenExpiresAt)")
             return cachedAccessToken
         }
@@ -157,6 +167,7 @@ actor LegalicAPIClient {
         }
 
         cachedAccessToken = token
+        tokenCacheKey = requestedCacheKey
         if let expires = envelope.expiresIn {
             tokenExpiresAt = Date().addingTimeInterval(TimeInterval(expires))
             LegalicLogger.line("requestAccessToken: expires_in=\(expires) сек")

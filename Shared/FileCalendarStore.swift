@@ -51,12 +51,24 @@ final class FileCalendarStore: CalendarStore {
         try save(events, to: eventsURL)
     }
 
+    func loadPendingDeletions() throws -> [PendingEventDeletion] {
+        try loadArray([PendingEventDeletion].self, from: pendingDeletionsURL)
+    }
+
+    func savePendingDeletions(_ deletions: [PendingEventDeletion]) throws {
+        try save(deletions, to: pendingDeletionsURL)
+    }
+
     private var calendarsURL: URL {
         baseURL.appendingPathComponent("calendars.json")
     }
 
     private var eventsURL: URL {
         baseURL.appendingPathComponent("events.json")
+    }
+
+    private var pendingDeletionsURL: URL {
+        baseURL.appendingPathComponent("pending-event-deletions.json")
     }
 
     private func ensureDirectoryExists() throws {

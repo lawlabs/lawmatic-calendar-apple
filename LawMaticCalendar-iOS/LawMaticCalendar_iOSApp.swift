@@ -8,10 +8,12 @@
 import SwiftUI
 
 @main
+@MainActor
 struct LawMaticCalendar_iOSApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onOpenURL { _ = ProviderRegistry.shared.google.handleOpenURL($0) }
         }
     }
 }

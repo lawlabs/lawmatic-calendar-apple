@@ -44,17 +44,17 @@ struct MacContentView: View {
 
                 ToolbarItem(placement: .automatic) {
                     Button {
-                        Task { await viewModel.syncTasksFromLegalic() }
+                        Task { await viewModel.syncAllProviders() }
                     } label: {
-                        if viewModel.isLegalicSyncing {
+                        if viewModel.isSyncing {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
-                            Label("LEGALIC", systemImage: "arrow.triangle.2.circlepath")
+                            Label("Синхронизировать", systemImage: "arrow.triangle.2.circlepath")
                         }
                     }
-                    .help("Загрузить задачи из LEGALIC")
-                    .disabled(viewModel.isLegalicSyncing)
+                    .help("Синхронизировать подключённые календари")
+                    .disabled(viewModel.isSyncing)
                 }
             }
         }

@@ -222,11 +222,11 @@ private struct IOSCalendarWorkspaceView: View {
 
                 Menu {
                     Button {
-                        Task { await viewModel.syncTasksFromLegalic() }
+                        Task { await viewModel.syncAllProviders() }
                     } label: {
-                        Label("Обновить из LEGALIC", systemImage: "arrow.triangle.2.circlepath")
+                        Label("Синхронизировать календари", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .disabled(viewModel.isLegalicSyncing)
+                    .disabled(viewModel.isSyncing)
 
                     Divider()
 
@@ -236,7 +236,7 @@ private struct IOSCalendarWorkspaceView: View {
                         Label("Настройки", systemImage: "gearshape")
                     }
                 } label: {
-                    if viewModel.isLegalicSyncing {
+                    if viewModel.isSyncing {
                         ProgressView()
                             .controlSize(.small)
                     } else {

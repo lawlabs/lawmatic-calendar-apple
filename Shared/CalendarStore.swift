@@ -3,6 +3,7 @@ import Foundation
 struct CalendarStoreSnapshot: Equatable {
     var calendars: [CalendarItem]
     var events: [CalendarEvent]
+    var pendingDeletions: [PendingEventDeletion] = []
 }
 
 protocol CalendarStore {
@@ -10,6 +11,8 @@ protocol CalendarStore {
     func saveCalendars(_ calendars: [CalendarItem]) throws
     func loadEvents() throws -> [CalendarEvent]
     func saveEvents(_ events: [CalendarEvent]) throws
+    func loadPendingDeletions() throws -> [PendingEventDeletion]
+    func savePendingDeletions(_ deletions: [PendingEventDeletion]) throws
 }
 
 final class InMemoryCalendarStore: CalendarStore {
@@ -33,5 +36,13 @@ final class InMemoryCalendarStore: CalendarStore {
 
     func saveEvents(_ events: [CalendarEvent]) throws {
         snapshot.events = events
+    }
+
+    func loadPendingDeletions() throws -> [PendingEventDeletion] {
+        snapshot.pendingDeletions
+    }
+
+    func savePendingDeletions(_ deletions: [PendingEventDeletion]) throws {
+        snapshot.pendingDeletions = deletions
     }
 }

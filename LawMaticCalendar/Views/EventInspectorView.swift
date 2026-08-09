@@ -40,6 +40,11 @@ struct EventInspectorView: View {
         return false
     }
 
+    private var isReadOnly: Bool {
+        guard let event = inspectedEvent else { return false }
+        return !viewModel.canEdit(event)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             InspectorMiniCalendar(viewModel: viewModel)
@@ -96,6 +101,13 @@ struct EventInspectorView: View {
 
     private var editorView: some View {
         Form {
+            if isReadOnly {
+                Section {
+                    Label("Этот календарь доступен только для чтения", systemImage: "lock.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Section {
                 if let selectedCalendar {
                     HStack(spacing: 8) {
@@ -138,7 +150,7 @@ struct EventInspectorView: View {
 
             Section("Календарь") {
                 Picker("Календарь", selection: $selectedCalendarId) {
-                    ForEach(viewModel.calendars) { calendar in
+                    ForEach(viewModel.calendars.filter { $0.isWritable || $0.id == selectedCalendarId }) { calendar in
                         HStack(spacing: 8) {
                             Circle()
                                 .fill(calendar.color.color)
@@ -172,6 +184,7 @@ struct EventInspectorView: View {
             }
         }
         .formStyle(.grouped)
+        .disabled(isReadOnly)
     }
 
     // MARK: - Empty State (событие не выбрано)
@@ -247,6 +260,7 @@ struct EventInspectorView: View {
         guard !isApplyingModelState, let existingEvent = inspectedEvent else {
             return
         }
+        guard viewModel.canEdit(existingEvent) else { return }
 
         let minimumDuration: TimeInterval = isAllDay ? 0 : 15 * 60
         let normalizedEndDate = max(endDate, startDate.addingTimeInterval(minimumDuration))
@@ -255,18 +269,14 @@ struct EventInspectorView: View {
             return
         }
 
-        let updatedEvent = CalendarEvent(
-            id: existingEvent.id,
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-            startDate: startDate,
-            endDate: normalizedEndDate,
-            isAllDay: isAllDay,
-            notes: notes,
-            location: location,
-            calendarId: selectedCalendarId,
-            externalId: existingEvent.externalId,
-            externalSource: existingEvent.externalSource
-        )
+        var updatedEvent = existingEvent
+        updatedEvent.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        updatedEvent.startDate = startDate
+        updatedEvent.endDate = normalizedEndDate
+        updatedEvent.isAllDay = isAllDay
+        updatedEvent.notes = notes
+        updatedEvent.location = location
+        updatedEvent.calendarId = selectedCalendarId
 
         guard updatedEvent != existingEvent else {
             return

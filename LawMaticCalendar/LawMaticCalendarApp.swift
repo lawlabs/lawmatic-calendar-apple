@@ -14,6 +14,7 @@ struct LawMaticCalendarApp: App {
     var body: some Scene {
         WindowGroup {
             MacContentView()
+                .onOpenURL { _ = ProviderRegistry.shared.google.handleOpenURL($0) }
         }
 
         Settings {

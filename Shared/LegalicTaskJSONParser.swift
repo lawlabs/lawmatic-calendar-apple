@@ -143,7 +143,8 @@ enum LegalicTaskJSONParser {
             startDate: startDate,
             endDate: endDate,
             isAllDay: isAllDay,
-            notes: notes
+            notes: notes,
+            updatedAt: updated ?? created ?? .distantPast
         )
     }
 

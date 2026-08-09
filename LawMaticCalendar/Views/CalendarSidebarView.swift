@@ -9,12 +9,12 @@ struct CalendarSidebarView: View {
 
             Section("Быстрый доступ") {
                 Button {
-                    Task { await viewModel.syncTasksFromLegalic() }
+                    Task { await viewModel.syncAllProviders() }
                 } label: {
-                    Label("Загрузить задачи LEGALIC", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Синхронизировать календари", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.isLegalicSyncing)
+                .disabled(viewModel.isSyncing)
 
                 Button {
                     viewModel.selectedDate = Date()

@@ -1,0 +1,98 @@
+import Foundation
+
+@MainActor
+protocol CalendarProvider: AnyObject {
+    var id: ProviderID { get }
+    var displayName: String { get }
+    var status: ProviderStatus { get }
+    var isEnabled: Bool { get set }
+
+    func signIn() async throws
+    func signOut() async
+    func listRemoteCalendars() async throws -> [RemoteCalendar]
+    func fetchEvents(calendar: RemoteCalendar, request: SyncRequest) async throws -> SyncBatch
+    func proposedRemoteEventID(for localEvent: CalendarEvent) -> String?
+    func pushUpsert(localEvent: CalendarEvent, to remoteCalendar: RemoteCalendar) async throws -> PushedRemoteEvent
+    func pushDelete(_ ref: RemoteEventRef, etag: String?) async throws
+}
+
+extension CalendarProvider {
+    func proposedRemoteEventID(for localEvent: CalendarEvent) -> String? { nil }
+}
+
+struct RemoteCalendar: Identifiable, Hashable {
+    let id: String
+    let providerID: ProviderID
+    let title: String
+    let colorHex: String?
+    let isWritable: Bool
+}
+
+struct RemoteEventRef: Hashable, Codable {
+    let providerID: ProviderID
+    let remoteCalendarID: String
+    let remoteEventID: String
+}
+
+struct PushedRemoteEvent {
+    let remoteRef: RemoteEventRef
+    let etag: String?
+    let updatedAt: Date
+}
+
+struct SyncRequest {
+    let dateRange: ClosedRange<Date>?
+    let pageToken: String?
+    let syncToken: String?
+}
+
+enum SyncBatchKind {
+    /// Батч является полной выборкой для `SyncRequest.dateRange`.
+    case fullSnapshot
+    /// Батч содержит только изменения после переданного sync token.
+    case incremental
+}
+
+struct SyncBatch {
+    let upserts: [ParsedRemoteEvent]
+    let deletes: [DeletedRemoteEvent]
+    let nextPageToken: String?
+    let nextSyncToken: String?
+    let kind: SyncBatchKind
+    /// Диапазон, полностью покрытый snapshot-батчем. `nil` означает
+    /// неограниченную полную выборку; для incremental-батчей не используется.
+    let coveredDateRange: ClosedRange<Date>?
+
+    init(
+        upserts: [ParsedRemoteEvent],
+        deletes: [DeletedRemoteEvent],
+        nextPageToken: String?,
+        nextSyncToken: String?,
+        kind: SyncBatchKind,
+        coveredDateRange: ClosedRange<Date>? = nil
+    ) {
+        self.upserts = upserts
+        self.deletes = deletes
+        self.nextPageToken = nextPageToken
+        self.nextSyncToken = nextSyncToken
+        self.kind = kind
+        self.coveredDateRange = coveredDateRange
+    }
+}
+
+struct ParsedRemoteEvent {
+    let remoteRef: RemoteEventRef
+    let title: String
+    let start: Date
+    let end: Date
+    let isAllDay: Bool
+    let notes: String
+    let location: String
+    let updatedAt: Date
+    let etag: String?
+}
+
+struct DeletedRemoteEvent {
+    let remoteRef: RemoteEventRef
+    let updatedAt: Date
+}

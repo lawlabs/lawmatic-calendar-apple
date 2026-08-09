@@ -1,15 +1,6 @@
 import Combine
 import SwiftUI
 
-private let legalicRangeLogFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "ru_RU")
-    formatter.dateStyle = .medium
-    formatter.timeStyle = .short
-    formatter.timeZone = TimeZone.current
-    return formatter
-}()
-
 @MainActor
 final class CalendarViewModel: ObservableObject {
     @Published var events: [CalendarEvent] = []
@@ -18,8 +9,9 @@ final class CalendarViewModel: ObservableObject {
     @Published var viewMode: ViewMode = .day
     @Published var inspectorState: EventInspectorState?
     @Published var storageError: IdentifiableMessage?
-    @Published var isLegalicSyncing = false
+    @Published private(set) var syncingProviderIDs: Set<ProviderID> = []
     @Published var legalicSyncError: IdentifiableMessage?
+    @Published private(set) var pendingDeletions: [PendingEventDeletion] = []
 
     private let store: CalendarStore
     private var cachedVisibleCalendarIds: Set<UUID> = []
@@ -62,8 +54,10 @@ final class CalendarViewModel: ObservableObject {
     }
 
     var defaultCalendarId: UUID {
-        calendars.first?.id ?? UUID()
+        calendars.first(where: \.isWritable)?.id ?? calendars.first?.id ?? UUID()
     }
+
+    var isSyncing: Bool { !syncingProviderIDs.isEmpty }
 
     var selectedEventId: UUID? {
         inspectorState?.eventID
@@ -83,13 +77,15 @@ final class CalendarViewModel: ObservableObject {
     }
 
     func addEvent(_ event: CalendarEvent) {
-        events.append(event)
+        events.append(preparedLocalChange(event, replacing: nil))
         saveEvents()
     }
 
     func updateEvent(_ event: CalendarEvent) {
         if let index = events.firstIndex(where: { $0.id == event.id }) {
-            events[index] = event
+            let previous = events[index]
+            guard canEdit(previous) else { return }
+            events[index] = preparedLocalChange(event, replacing: previous)
             if !isPendingNewEvent(event.id) {
                 saveEvents()
             }
@@ -97,11 +93,18 @@ final class CalendarViewModel: ObservableObject {
     }
 
     func deleteEvent(_ event: CalendarEvent) {
+        guard canEdit(event) else { return }
+        enqueueDeletionIfNeeded(for: event)
         events.removeAll { $0.id == event.id }
         if selectedEventId == event.id {
             closeInspector()
         }
         saveEvents()
+        savePendingDeletions()
+    }
+
+    func canEdit(_ event: CalendarEvent) -> Bool {
+        calendar(for: event)?.isWritable ?? true
     }
 
     func selectEvent(_ event: CalendarEvent) {
@@ -167,9 +170,9 @@ final class CalendarViewModel: ObservableObject {
     func completeEditing(with event: CalendarEvent, isNewEvent: Bool) {
         if isNewEvent {
             if let index = events.firstIndex(where: { $0.id == event.id }) {
-                events[index] = event
+                events[index] = preparedLocalChange(event, replacing: events[index])
             } else {
-                events.append(event)
+                events.append(preparedLocalChange(event, replacing: nil))
             }
             saveEvents()
         } else {
@@ -182,9 +185,9 @@ final class CalendarViewModel: ObservableObject {
     func applyInspectorChanges(_ event: CalendarEvent) {
         if isPendingNewEvent(event.id) {
             if let index = events.firstIndex(where: { $0.id == event.id }) {
-                events[index] = event
+                events[index] = preparedLocalChange(event, replacing: events[index])
             } else {
-                events.append(event)
+                events.append(preparedLocalChange(event, replacing: nil))
             }
 
             if !event.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -195,6 +198,56 @@ final class CalendarViewModel: ObservableObject {
         }
 
         updateEvent(event)
+    }
+
+    private func preparedLocalChange(_ event: CalendarEvent, replacing previous: CalendarEvent?) -> CalendarEvent {
+        var changed = event
+        guard let destination = calendars.first(where: { $0.id == event.calendarId }),
+              let providerID = destination.externalProvider,
+              let remoteCalendarID = destination.externalId
+        else {
+            if let previous { enqueueDeletionIfNeeded(for: previous) }
+            changed.externalId = nil
+            changed.externalProvider = nil
+            changed.externalCalendarId = nil
+            changed.externalETag = nil
+            changed.pendingCreateRemoteId = nil
+            changed.remoteUpdatedAt = nil
+            changed.syncState = .clean
+            return changed
+        }
+
+        guard destination.isWritable else { return previous ?? changed }
+        let isSameRemoteEvent = previous?.externalProvider == providerID &&
+            previous?.externalCalendarId == remoteCalendarID
+        if !isSameRemoteEvent, let previous { enqueueDeletionIfNeeded(for: previous) }
+
+        changed.externalProvider = providerID
+        changed.externalCalendarId = remoteCalendarID
+        changed.externalId = isSameRemoteEvent ? previous?.externalId : nil
+        changed.externalETag = isSameRemoteEvent ? previous?.externalETag : nil
+        changed.pendingCreateRemoteId = isSameRemoteEvent ? previous?.pendingCreateRemoteId : nil
+        changed.remoteUpdatedAt = isSameRemoteEvent ? previous?.remoteUpdatedAt : nil
+        changed.localUpdatedAt = Date()
+        changed.syncState = .pendingUpload
+        return changed
+    }
+
+    private func enqueueDeletionIfNeeded(for event: CalendarEvent) {
+        guard let providerID = event.externalProvider,
+              let remoteCalendarID = event.externalCalendarId,
+              let remoteEventID = event.externalId,
+              let sourceCalendar = calendars.first(where: { $0.id == event.calendarId }),
+              sourceCalendar.isWritable
+        else { return }
+        let ref = RemoteEventRef(
+            providerID: providerID,
+            remoteCalendarID: remoteCalendarID,
+            remoteEventID: remoteEventID
+        )
+        guard !pendingDeletions.contains(where: { $0.remoteRef == ref }) else { return }
+        pendingDeletions.append(PendingEventDeletion(remoteRef: ref, etag: event.externalETag))
+        savePendingDeletions()
     }
 
     func discardEditing() {
@@ -288,6 +341,17 @@ final class CalendarViewModel: ObservableObject {
         }
     }
 
+    private func savePendingDeletions() {
+        do {
+            try store.savePendingDeletions(pendingDeletions)
+        } catch {
+            storageError = IdentifiableMessage(
+                title: "Ошибка сохранения очереди синхронизации",
+                message: error.localizedDescription
+            )
+        }
+    }
+
     private func saveCalendars() {
         do {
             try store.saveCalendars(calendars)
@@ -304,8 +368,8 @@ final class CalendarViewModel: ObservableObject {
             let loadedCalendars = try store.loadCalendars()
             calendars = loadedCalendars.isEmpty ? CalendarSeedData.defaultCalendars() : loadedCalendars
             events = try store.loadEvents()
+            pendingDeletions = try store.loadPendingDeletions()
             updateVisibleCalendarCache()
-            ensureLegalicCalendarExists()
 
             if loadedCalendars.isEmpty {
                 saveCalendars()
@@ -313,37 +377,13 @@ final class CalendarViewModel: ObservableObject {
         } catch {
             calendars = CalendarSeedData.defaultCalendars()
             events = []
+            pendingDeletions = []
             updateVisibleCalendarCache()
-            ensureLegalicCalendarExists()
             storageError = IdentifiableMessage(
                 title: "Ошибка загрузки",
                 message: error.localizedDescription
             )
         }
-    }
-
-    func ensureLegalicCalendarExists() {
-        let id = LegalicCalendarConfiguration.stableCalendarId
-        if let idx = calendars.firstIndex(where: { $0.id == id }) {
-            if !calendars[idx].isVisible {
-                calendars[idx].isVisible = true
-                updateVisibleCalendarCache()
-                saveCalendars()
-                LegalicLogger.line("ensureLegalicCalendarExists: календарь LEGALIC был скрыт — снова включён показ")
-            }
-            return
-        }
-        calendars.append(
-            CalendarItem(
-                id: id,
-                name: LegalicCalendarConfiguration.displayName,
-                color: .purple,
-                isVisible: true,
-                accountName: "LEGALIC"
-            )
-        )
-        updateVisibleCalendarCache()
-        saveCalendars()
     }
 
     func visibleCalendarDateRange() -> ClosedRange<Date> {
@@ -379,108 +419,230 @@ final class CalendarViewModel: ObservableObject {
         return start ... end
     }
 
-    private func legalicImportOverlapsVisibleRange(_ imp: LegalicTaskImport, range uiRange: ClosedRange<Date>) -> Bool {
-        imp.startDate <= uiRange.upperBound && imp.endDate >= uiRange.lowerBound
-    }
-
-    private func focusCalendarOnLegalicImportsIfNeeded(_ imports: [LegalicTaskImport]) {
-        guard !imports.isEmpty else { return }
-        let uiRange = visibleCalendarDateRange()
-        if imports.contains(where: { legalicImportOverlapsVisibleRange($0, range: uiRange) }) {
+    func syncAllProviders() async {
+        legalicSyncError = nil
+        let providers = ProviderRegistry.shared.enabledProviders
+        guard !providers.isEmpty else {
+            legalicSyncError = IdentifiableMessage(
+                title: "Синхронизация",
+                message: "Включите хотя бы один аккаунт в настройках."
+            )
             return
         }
-        let calendar = Calendar.current
-        guard let minStart = imports.map(\.startDate).min() else { return }
-        selectedDate = calendar.startOfDay(for: minStart)
-        LegalicLogger.line(
-            "syncTasksFromLegalic: в текущем \(viewMode.rawValue) (\(legalicRangeLogFormatter.string(from: uiRange.lowerBound)) — \(legalicRangeLogFormatter.string(from: uiRange.upperBound))) нет импортированных задач — выбран день первой: \(legalicRangeLogFormatter.string(from: selectedDate))"
+        var failures: [String] = []
+        for provider in providers {
+            do {
+                try await synchronize(provider)
+            } catch {
+                failures.append("\(provider.displayName): \(error.localizedDescription)")
+            }
+        }
+        if !failures.isEmpty {
+            legalicSyncError = IdentifiableMessage(
+                title: "Синхронизация завершена с ошибками",
+                message: failures.joined(separator: "\n\n")
+            )
+        }
+    }
+
+    func sync(providerID: ProviderID) async {
+        legalicSyncError = nil
+        guard let provider = ProviderRegistry.shared.provider(providerID) else {
+            legalicSyncError = IdentifiableMessage(
+                title: "Синхронизация",
+                message: ProviderError.unknownProvider(providerID).localizedDescription
+            )
+            return
+        }
+        do {
+            try await synchronize(provider)
+        } catch {
+            legalicSyncError = IdentifiableMessage(
+                title: provider.displayName,
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func synchronize(_ provider: any CalendarProvider) async throws {
+        guard provider.isEnabled else { throw ProviderError.providerDisabled(provider.id) }
+        syncingProviderIDs.insert(provider.id)
+        defer { syncingProviderIDs.remove(provider.id) }
+
+        let remoteCalendars = try await provider.listRemoteCalendars()
+        mergeRemoteCalendars(remoteCalendars, provider: provider)
+
+        for remoteCalendar in remoteCalendars {
+            guard let localIndex = calendars.firstIndex(where: {
+                $0.externalProvider == provider.id && $0.externalId == remoteCalendar.id
+            }) else { continue }
+
+            let requestedRange: ClosedRange<Date>? = provider.id == .legalic
+                ? visibleCalendarDateRange()
+                : nil
+            var syncToken = calendars[localIndex].syncToken
+            let batch: SyncBatch
+            do {
+                batch = try await fetchAllEvents(
+                    provider: provider,
+                    calendar: remoteCalendar,
+                    dateRange: requestedRange,
+                    syncToken: syncToken
+                )
+            } catch ProviderError.syncTokenExpired {
+                syncToken = nil
+                calendars[localIndex].syncToken = nil
+                batch = try await fetchAllEvents(
+                    provider: provider,
+                    calendar: remoteCalendar,
+                    dateRange: requestedRange,
+                    syncToken: nil
+                )
+            }
+
+            let deletionResolution = CalendarSyncMerger.resolveDeletionConflicts(
+                in: batch,
+                pendingDeletions: pendingDeletions
+            )
+            pendingDeletions = deletionResolution.pendingDeletions
+            let resolvedBatch = deletionResolution.batch
+            events = CalendarSyncMerger.merge(
+                resolvedBatch,
+                into: events,
+                localCalendar: calendars[localIndex],
+                dateRange: requestedRange
+            )
+            if let nextSyncToken = resolvedBatch.nextSyncToken {
+                calendars[localIndex].syncToken = nextSyncToken
+            }
+            // Применённый batch и cursor сохраняем до исходящих операций.
+            // Если push упадёт, следующий запуск продолжит с уже сохранённого
+            // локального состояния, а dirty/outbox останутся для повтора.
+            saveCalendars()
+            saveEvents()
+            savePendingDeletions()
+        }
+
+        // Сначала pull + LWW выше, и только затем push тех локальных
+        // изменений, которые действительно победили конфликт.
+        try await flushPendingDeletions(for: provider)
+        try await flushPendingUpserts(for: provider, remoteCalendars: remoteCalendars)
+
+        updateVisibleCalendarCache()
+        saveCalendars()
+        saveEvents()
+        savePendingDeletions()
+    }
+
+    private func fetchAllEvents(
+        provider: any CalendarProvider,
+        calendar: RemoteCalendar,
+        dateRange: ClosedRange<Date>?,
+        syncToken: String?
+    ) async throws -> SyncBatch {
+        var pageToken: String?
+        var allUpserts: [ParsedRemoteEvent] = []
+        var allDeletes: [DeletedRemoteEvent] = []
+        var nextSyncToken: String?
+        var kind: SyncBatchKind = syncToken == nil ? .fullSnapshot : .incremental
+        var coveredDateRange: ClosedRange<Date>?
+        repeat {
+            let page = try await provider.fetchEvents(
+                calendar: calendar,
+                request: SyncRequest(dateRange: dateRange, pageToken: pageToken, syncToken: syncToken)
+            )
+            allUpserts.append(contentsOf: page.upserts)
+            allDeletes.append(contentsOf: page.deletes)
+            pageToken = page.nextPageToken
+            nextSyncToken = page.nextSyncToken ?? nextSyncToken
+            kind = page.kind
+            coveredDateRange = page.coveredDateRange
+        } while pageToken != nil
+        return SyncBatch(
+            upserts: allUpserts,
+            deletes: allDeletes,
+            nextPageToken: nil,
+            nextSyncToken: nextSyncToken,
+            kind: kind,
+            coveredDateRange: coveredDateRange
         )
     }
 
-    func syncTasksFromLegalic() async {
-        LegalicLogger.line("syncTasksFromLegalic: кнопка нажата, viewMode=\(viewMode.rawValue), selectedDate=\(selectedDate)")
-        legalicSyncError = nil
-        let legalic = LegalicService.shared
-        guard legalic.hasCredentials else {
-            LegalicLogger.line("syncTasksFromLegalic: нет apiKey/apiSecret — выход")
-            legalicSyncError = IdentifiableMessage(
-                title: "LEGALIC",
-                message: "Укажите API Key и API Secret в настройках приложения (⌘,)."
-            )
-            return
-        }
-
-        isLegalicSyncing = true
-        defer {
-            isLegalicSyncing = false
-            LegalicLogger.line("syncTasksFromLegalic: конец (isLegalicSyncing=false)")
-        }
-
-        do {
-            let visibleRange = legalic.syncTasksInVisibleRangeOnly ? visibleCalendarDateRange() : nil
-            let tasksURL = legalic.tasksFetchURL(visibleDateRange: visibleRange)
-
-            if let visibleRange {
-                LegalicLogger.line(
-                    "syncTasksFromLegalic: видимый период (локально, \(TimeZone.current.identifier)): \(legalicRangeLogFormatter.string(from: visibleRange.lowerBound)) — \(legalicRangeLogFormatter.string(from: visibleRange.upperBound))"
-                )
-                LegalicLogger.line("syncTasksFromLegalic: тот же интервал в UTC для API: \(visibleRange.lowerBound) … \(visibleRange.upperBound)")
+    private func mergeRemoteCalendars(_ remoteCalendars: [RemoteCalendar], provider: any CalendarProvider) {
+        for remote in remoteCalendars {
+            let color = EventColor.nearest(to: remote.colorHex, fallback: provider.id.defaultColor)
+            if let index = calendars.firstIndex(where: {
+                $0.externalProvider == provider.id && $0.externalId == remote.id
+            }) {
+                calendars[index].name = remote.title
+                calendars[index].color = color
+                calendars[index].accountName = provider.displayName
+                calendars[index].isWritable = remote.isWritable
             } else {
-                LegalicLogger.line("syncTasksFromLegalic: полная выгрузка (без from/to)")
-            }
-            LegalicLogger.line(
-                "syncTasksFromLegalic: базовый URL задач (к нему добавятся page/per_page): \(tasksURL.absoluteString), страниц ≤\(legalic.taskSyncMaxPages), per_page=\(legalic.taskSyncPerPage)"
-            )
-
-            let imports = try await LegalicAPIClient.shared.fetchTasks(
-                baseURL: legalic.resolvedBaseURL,
-                tasksURL: tasksURL,
-                apiKey: legalic.apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
-                apiSecret: legalic.apiSecret.trimmingCharacters(in: .whitespacesAndNewlines),
-                maxPages: legalic.taskSyncMaxPages,
-                perPage: legalic.taskSyncPerPage
-            )
-            LegalicLogger.line("syncTasksFromLegalic: получено задач: \(imports.count)")
-            ensureLegalicCalendarExists()
-            let calendarId = LegalicCalendarConfiguration.stableCalendarId
-            let tag = LegalicCalendarConfiguration.sourceTag
-
-            let beforeCount = events.filter { $0.calendarId == calendarId }.count
-            if let visibleRange {
-                events.removeAll { event in
-                    guard event.calendarId == calendarId else { return false }
-                    return visibleRange.contains(event.startDate)
-                }
-            } else {
-                events.removeAll { $0.calendarId == calendarId }
-            }
-            let removed = beforeCount - events.filter { $0.calendarId == calendarId }.count
-            LegalicLogger.line("syncTasksFromLegalic: удалено событий в календаре LEGALIC: \(removed) (было \(beforeCount))")
-
-            for task in imports {
-                events.append(
-                    CalendarEvent(
-                        title: task.title,
-                        startDate: task.startDate,
-                        endDate: task.endDate,
-                        isAllDay: task.isAllDay,
-                        notes: task.notes,
-                        location: "",
-                        calendarId: calendarId,
-                        externalId: task.id,
-                        externalSource: tag
+                calendars.append(
+                    CalendarItem(
+                        name: remote.title,
+                        color: color,
+                        accountName: provider.displayName,
+                        externalProvider: provider.id,
+                        externalId: remote.id,
+                        isWritable: remote.isWritable
                     )
                 )
             }
-            focusCalendarOnLegalicImportsIfNeeded(imports)
+        }
+        updateVisibleCalendarCache()
+        saveCalendars()
+    }
+
+    private func flushPendingDeletions(for provider: any CalendarProvider) async throws {
+        let queued = pendingDeletions.filter { $0.remoteRef.providerID == provider.id }
+        for deletion in queued {
+            try await provider.pushDelete(deletion.remoteRef, etag: deletion.etag)
+            pendingDeletions.removeAll { $0.id == deletion.id }
+            savePendingDeletions()
+        }
+    }
+
+    private func flushPendingUpserts(
+        for provider: any CalendarProvider,
+        remoteCalendars: [RemoteCalendar]
+    ) async throws {
+        let eventIDs = events.filter {
+            $0.externalProvider == provider.id && $0.syncState == .pendingUpload
+        }.map(\.id)
+        for eventID in eventIDs {
+            guard let index = events.firstIndex(where: { $0.id == eventID }),
+                  let remoteCalendarID = events[index].externalCalendarId,
+                  let remoteCalendar = remoteCalendars.first(where: { $0.id == remoteCalendarID })
+            else { continue }
+            if events[index].externalId == nil,
+               events[index].pendingCreateRemoteId == nil {
+                events[index].pendingCreateRemoteId = provider.proposedRemoteEventID(for: events[index])
+                try persistEventsBeforePush()
+            }
+            let pushed = try await provider.pushUpsert(localEvent: events[index], to: remoteCalendar)
+            guard let currentIndex = events.firstIndex(where: { $0.id == eventID }) else { continue }
+            events[currentIndex].externalProvider = pushed.remoteRef.providerID
+            events[currentIndex].externalCalendarId = pushed.remoteRef.remoteCalendarID
+            events[currentIndex].externalId = pushed.remoteRef.remoteEventID
+            events[currentIndex].externalETag = pushed.etag
+            events[currentIndex].pendingCreateRemoteId = nil
+            events[currentIndex].remoteUpdatedAt = pushed.updatedAt
+            events[currentIndex].syncState = .clean
             saveEvents()
-            LegalicLogger.line("syncTasksFromLegalic: сохранено, всего событий в модели: \(events.count)")
+        }
+    }
+
+    private func persistEventsBeforePush() throws {
+        do {
+            try store.saveEvents(events)
         } catch {
-            LegalicLogger.line("syncTasksFromLegalic: ОШИБКА — \(error.localizedDescription)")
-            legalicSyncError = IdentifiableMessage(
-                title: "LEGALIC",
+            storageError = IdentifiableMessage(
+                title: "Ошибка сохранения очереди синхронизации",
                 message: error.localizedDescription
             )
+            throw error
         }
     }
 

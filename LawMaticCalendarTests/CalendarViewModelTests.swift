@@ -561,3 +561,27 @@ final class EventRepositoryIndexTests: XCTestCase {
         XCTAssertEqual(starts, starts.sorted())
     }
 }
+
+// MARK: - Сироты после потери списка календарей
+
+@MainActor
+final class EventRepositoryOrphanTests: XCTestCase {
+    func testLocalOrphansMoveToLocalCalendarAndExternalOrphansAreDropped() throws {
+        let calendars = CalendarSeedData.defaultCalendars()
+        let vanishedCalendar = UUID()
+        let local = CalendarEvent(title: "Своё", startDate: Date(), endDate: Date().addingTimeInterval(3600), calendarId: vanishedCalendar)
+        let external = CalendarEvent(
+            title: "Чужое", startDate: Date(), endDate: Date().addingTimeInterval(3600),
+            calendarId: vanishedCalendar, externalId: "x", externalProvider: .apple, externalCalendarId: "c"
+        )
+        let intact = CalendarEvent(title: "На месте", startDate: Date(), endDate: Date().addingTimeInterval(3600), calendarId: calendars[1].id)
+        let store = InMemoryCalendarStore(snapshot: CalendarStoreSnapshot(calendars: calendars, events: [local, external, intact]))
+
+        let repository = EventRepository(store: store, saveDebounce: .seconds(60))
+
+        XCTAssertEqual(repository.events.map(\.title), ["Своё", "На месте"])
+        XCTAssertEqual(repository.events.first?.calendarId, calendars[0].id, "Локальная сирота ушла в первый локальный календарь")
+        XCTAssertEqual(try store.loadEvents().count, 2, "Исправленный список сохранён")
+        XCTAssertFalse(repository.events(for: Date()).isEmpty)
+    }
+}

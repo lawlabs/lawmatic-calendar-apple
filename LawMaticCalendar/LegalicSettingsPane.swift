@@ -5,7 +5,9 @@ struct LegalicSettingsPane: View {
     @State private var connectionError: String?
     @State private var isSigningIn = false
 
-    private var isSignedIn: Bool { provider.status.isSignedIn }
+    /// Вошли — значит пара подтверждена сервером и лежит в Keychain; статус
+    /// провайдера меняется во время синка и на ошибках, но вход это не отменяет.
+    private var isSignedIn: Bool { provider.hasStoredCredentials }
 
     var body: some View {
         Form {
@@ -82,7 +84,7 @@ struct LegalicSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Text(provider.status.shortDescription)
+                Text(statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -101,6 +103,16 @@ struct LegalicSettingsPane: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
+    }
+
+    private var statusText: String {
+        if isSignedIn, let name = provider.accountName, !name.isEmpty {
+            if case .error(let message) = provider.status {
+                return "\(name) — ошибка синхронизации: \(message.prefix(80))"
+            }
+            return "\(name) · \(provider.login)"
+        }
+        return provider.status.shortDescription
     }
 
     private func signInIfPossible() {

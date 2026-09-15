@@ -135,13 +135,18 @@ struct MacContentView: View {
                 Task { await viewModel.syncAllProviders() }
             } label: {
                 if viewModel.isSyncing {
-                    ProgressView()
-                        .controlSize(.small)
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Синхронизация…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Label("Синхронизировать", systemImage: "arrow.triangle.2.circlepath")
                 }
             }
-            .help(syncHelpText)
+            .help(viewModel.isSyncing ? (viewModel.syncProgressText ?? "Синхронизация…") : syncHelpText)
             .accessibilityLabel("Синхронизировать")
             .disabled(viewModel.isSyncing)
 

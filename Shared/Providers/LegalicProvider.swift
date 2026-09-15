@@ -204,7 +204,6 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
         let cursor = request.pageToken ?? request.syncToken
         let kind: SyncBatchKind = request.syncToken == nil ? .fullSnapshot : .incremental
         let horizon = historyHorizon
-        status = .syncing
 
         do {
             let batch: SyncBatch
@@ -272,6 +271,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
             status = .signedIn(accountLabel: accountLabel)
             return batch
         } catch {
+            // Вход остаётся действительным: ошибка синка — не разлогин.
             status = .error(error.localizedDescription)
             throw error
         }

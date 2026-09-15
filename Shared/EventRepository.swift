@@ -274,14 +274,35 @@ final class EventRepository {
         store.waitForPendingWrites(timeout: 5)
     }
 
+    /// События, чей календарь исчез (например, после сбоя загрузки список
+    /// календарей был создан заново), в интерфейсе невидимы. Локальные
+    /// переносим в первый локальный календарь, внешние убираем — их вернёт
+    /// синхронизация своего провайдера с правильной привязкой.
+    static func reattachingOrphans(in events: [CalendarEvent], calendars: [CalendarItem]) -> [CalendarEvent] {
+        let knownIDs = Set(calendars.map(\.id))
+        guard events.contains(where: { !knownIDs.contains($0.calendarId) }) else { return events }
+        let fallbackLocal = calendars.first { $0.externalProvider == nil && $0.isWritable }?.id ?? calendars.first?.id
+        return events.compactMap { event in
+            if knownIDs.contains(event.calendarId) { return event }
+            guard event.externalProvider == nil, let fallbackLocal else { return nil }
+            var moved = event
+            moved.calendarId = fallbackLocal
+            return moved
+        }
+    }
+
     private func loadPersistedData() {
         do {
             let loadedCalendars = try store.loadCalendars()
             calendars = loadedCalendars.isEmpty ? CalendarSeedData.defaultCalendars() : loadedCalendars
             // Записи с бессмысленными датами (наследие «нулевых» дат из внешних
             // импортов) в календаре не нужны; синхронизация вернёт их правильно.
-            events = try store.loadEvents().filter(\.hasPlausibleDates)
+            let loadedEvents = try store.loadEvents().filter(\.hasPlausibleDates)
+            events = Self.reattachingOrphans(in: loadedEvents, calendars: calendars)
             pendingDeletions = try store.loadPendingDeletions()
+            if events.count != loadedEvents.count || events != loadedEvents {
+                save(.events)
+            }
 
             if loadedCalendars.isEmpty {
                 save(.calendars)

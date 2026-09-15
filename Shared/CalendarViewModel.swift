@@ -80,6 +80,7 @@ final class CalendarViewModel {
     // MARK: - Проброс синхронизации
 
     var isSyncing: Bool { sync.isSyncing }
+    var syncProgressText: String? { sync.progressText }
     var syncingProviderIDs: Set<ProviderID> { sync.syncingProviderIDs }
     var lastSuccessfulSyncDate: Date? { sync.lastSuccessfulSyncDate }
 

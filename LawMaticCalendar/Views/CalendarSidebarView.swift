@@ -16,6 +16,21 @@ struct CalendarSidebarView: View {
                 .buttonStyle(.plain)
                 .disabled(viewModel.isSyncing)
 
+                if viewModel.isSyncing {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text(viewModel.syncProgressText ?? "Синхронизация…")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+                } else if let date = viewModel.lastSuccessfulSyncDate {
+                    Text("Последняя синхронизация: \(date.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
                 Button {
                     viewModel.selectedDate = Date()
                     viewModel.viewMode = .day

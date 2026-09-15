@@ -19,6 +19,8 @@ extension ProviderRegistry: CalendarProviderResolving {}
 @MainActor
 final class CalendarSyncCoordinator {
     private(set) var syncingProviderIDs: Set<ProviderID> = []
+    /// Что сейчас делает синхронизация — для индикатора в тулбаре и сайдбаре.
+    private(set) var progressText: String?
     var syncError: IdentifiableMessage?
     /// Время последней полностью успешной синхронизации всех включённых аккаунтов.
     private(set) var lastSuccessfulSyncDate: Date?
@@ -140,7 +142,11 @@ final class CalendarSyncCoordinator {
         guard !syncingProviderIDs.contains(provider.id) else { return }
         repository.flushPendingSaves()
         syncingProviderIDs.insert(provider.id)
-        defer { syncingProviderIDs.remove(provider.id) }
+        progressText = "\(provider.displayName): список календарей…"
+        defer {
+            syncingProviderIDs.remove(provider.id)
+            if syncingProviderIDs.isEmpty { progressText = nil }
+        }
 
         let remoteCalendars = try await provider.listRemoteCalendars()
         mergeRemoteCalendars(remoteCalendars, provider: provider)
@@ -167,6 +173,7 @@ final class CalendarSyncCoordinator {
                 repository.calendars[localIndex].syncToken = nil
             }
             let batch: SyncBatch
+            progressText = "\(provider.displayName): \(remoteCalendar.title)…"
             do {
                 batch = try await fetchAllEvents(
                     provider: provider,
@@ -215,6 +222,7 @@ final class CalendarSyncCoordinator {
 
         // Сначала pull + LWW выше, и только затем push тех локальных
         // изменений, которые действительно победили конфликт.
+        progressText = "\(provider.displayName): отправка изменений…"
         try await flushPendingDeletions(for: provider)
         try await flushPendingUpserts(for: provider, remoteCalendars: remoteCalendars)
 
@@ -260,6 +268,7 @@ final class CalendarSyncCoordinator {
         var nextSyncToken: String?
         var kind: SyncBatchKind = syncToken == nil ? .fullSnapshot : .incremental
         var coveredDateRange: ClosedRange<Date>?
+        var pageCount = 0
         repeat {
             let page = try await provider.fetchEvents(
                 calendar: calendar,
@@ -267,6 +276,10 @@ final class CalendarSyncCoordinator {
             )
             allUpserts.append(contentsOf: page.upserts)
             allDeletes.append(contentsOf: page.deletes)
+            pageCount += 1
+            if page.nextPageToken != nil || pageCount > 1 {
+                progressText = "\(provider.displayName): \(calendar.title) — страница \(pageCount), записей \(allUpserts.count + allDeletes.count)"
+            }
             pageToken = page.nextPageToken
             nextSyncToken = page.nextSyncToken ?? nextSyncToken
             kind = page.kind

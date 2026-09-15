@@ -1,249 +1,371 @@
 import Foundation
 
-struct LegalicTaskImport: Sendable {
-    let id: String
-    let title: String
-    let startDate: Date
-    let endDate: Date
-    let isAllDay: Bool
-    let notes: String
-    let updatedAt: Date
+/// Учётная запись LEGALIC, как её видит сервер (`GET /sync/v1/me/info`).
+struct LegalicAccountInfo: Equatable, Sendable {
+    let guid: String
+    let fullName: String
+    let isActive: Bool
 }
 
-enum LegalicAPIError: LocalizedError {
-    case invalidURL
+/// Страница курсорной ленты `/sync/v1/<ресурс>`, уже разобранная в записи.
+struct LegalicFeedPage<Record: Sendable>: Sendable {
+    let items: [Record]
+    /// Отзыв доступа: guid записей, которые перестали быть видны этому пользователю.
+    let revokedGuids: [String]
+    let nextCursor: String?
+    let hasMore: Bool
+}
+
+/// Итог записи `POST /sync/v1/<ресурс>`.
+struct LegalicWriteResult<Record: Sendable>: Sendable {
+    let status: Int
+    let item: Record?
+}
+
+enum LegalicAPIError: LocalizedError, Equatable {
+    case invalidServer(String)
+    case authenticationFailed(String)
+    case accountDeactivated
     case httpStatus(Int, String?)
-    case noData
-    case tokenMissing
-    case decodingFailed(String)
+    case malformedResponse(String)
+    case forbidden
+    case validationFailed(String)
+    case dependencyMissing(String)
 
     var errorDescription: String? {
         switch self {
-        case .invalidURL:
-            return "Некорректный базовый URL LEGALIC."
+        case .invalidServer(let server):
+            return "Непонятный адрес сервера LEGALIC: \(server)"
+        case .authenticationFailed(let reason):
+            return "Вход в LEGALIC не удался: \(reason)"
+        case .accountDeactivated:
+            return "Учётная запись LEGALIC деактивирована."
         case .httpStatus(let code, let body):
-            let tail = body.map { "\n\($0.prefix(500))" } ?? ""
-            return "Ошибка сервера LEGALIC (\(code)).\(tail)"
-        case .noData:
-            return "Пустой ответ LEGALIC."
-        case .tokenMissing:
-            return "В ответе LEGALIC нет access_token."
-        case .decodingFailed(let reason):
-            return "Не удалось разобрать ответ: \(reason)"
+            let tail = body.flatMap { $0.isEmpty ? nil : "\n\($0.prefix(300))" } ?? ""
+            return "Сервер LEGALIC вернул HTTP \(code).\(tail)"
+        case .malformedResponse(let reason):
+            return "Непонятный ответ LEGALIC: \(reason)"
+        case .forbidden:
+            return "LEGALIC: нет прав на изменение этой записи."
+        case .validationFailed(let message):
+            return "LEGALIC отклонил запись: \(message)"
+        case .dependencyMissing(let message):
+            return "LEGALIC: в записи есть ссылка на неизвестный объект. \(message)"
         }
     }
 }
 
+/// Транспорт курсорного контракта LEGALIC (`/token`, `/sync/v1/*`).
+///
+/// Вход по логину и паролю (`grant_type=password`), продление по `refresh_token`.
+/// Секреты живут только в теле запроса токена: в логах и текстах ошибок их нет.
 actor LegalicAPIClient {
-    static let shared = LegalicAPIClient()
+    /// Потолок сервера — 500; значения вне диапазона он подрезает молча.
+    static let feedPageLimit = 500
+    /// За сколько секунд до истечения access-токен считается протухшим.
+    private static let expiryMargin: TimeInterval = 60
 
-    private var cachedAccessToken: String?
-    private var tokenExpiresAt: Date?
-    private var tokenCacheKey: String?
+    private struct TokenState {
+        var accessToken: String
+        var refreshToken: String?
+        var expiresAt: Date
+        /// Для каких учётных данных выдан токен.
+        var credentialsKey: String
+    }
 
     private let urlSession: URLSession
+    private var tokens: TokenState?
 
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
     }
 
-    func invalidateToken() {
-        cachedAccessToken = nil
-        tokenExpiresAt = nil
-        tokenCacheKey = nil
-    }
-
-    func validateCredentials(baseURL: URL, apiKey: String, apiSecret: String) async throws {
-        _ = try await requestAccessToken(baseURL: baseURL, apiKey: apiKey, apiSecret: apiSecret)
-    }
-
-    func fetchTasks(
-        baseURL: URL,
-        tasksURL: URL,
-        apiKey: String,
-        apiSecret: String,
-        maxPages: Int = 1,
-        perPage: Int = 50
-    ) async throws -> [LegalicTaskImport] {
-        LegalicLogger.line("fetchTasks: старт")
-        LegalicLogger.line("fetchTasks: baseURL=\(baseURL.absoluteString)")
-        LegalicLogger.line("fetchTasks: tasksURL (без пагинации в логе — см. GET ниже)=\(tasksURL.absoluteString)")
-        LegalicLogger.line("fetchTasks: apiKey=\(LegalicLogger.maskedApiKey(apiKey))")
-        LegalicLogger.line("fetchTasks: maxPages=\(maxPages) perPage=\(perPage)")
-        let token = try await requestAccessToken(baseURL: baseURL, apiKey: apiKey, apiSecret: apiSecret)
-        LegalicLogger.line("fetchTasks: токен получен, префикс \(LegalicLogger.maskedTokenPrefix(token))")
-
-        let cap = max(1, maxPages)
-        let pageSize = max(1, min(perPage, 500))
-
-        var collected: [LegalicTaskImport] = []
-        var seenIds = Set<String>()
-        var pageCountFromApi = 1
-
-        for page in 1 ... cap {
-            let pageURL = Self.tasksURLAppendingPagination(base: tasksURL, page: page, perPage: pageSize)
-            LegalicLogger.line("fetchTasks: загрузка страницы \(page) из ≤\(cap) — \(pageURL.absoluteString)")
-            let data = try await downloadTasksData(tasksURL: pageURL, accessToken: token)
-            let envelope = try LegalicTaskJSONParser.parseTasksPage(from: data)
-            pageCountFromApi = envelope.pageCount
-            for task in envelope.tasks where seenIds.insert(task.id).inserted {
-                collected.append(task)
-            }
-            LegalicLogger.line(
-                "fetchTasks: страница \(envelope.page)/\(envelope.pageCount), на странице задач: \(envelope.tasks.count), уникальных всего: \(collected.count)"
-            )
-            if page >= min(envelope.pageCount, cap) {
-                break
-            }
+    /// Нормализует адрес: «legalic.ru» → «https://legalic.ru», убирает хвостовой слэш.
+    static func serverURL(from raw: String) throws -> URL {
+        var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard !trimmed.isEmpty else { throw LegalicAPIError.invalidServer(raw) }
+        if !trimmed.hasPrefix("http://"), !trimmed.hasPrefix("https://") {
+            trimmed = "https://" + trimmed
         }
+        guard let url = URL(string: trimmed), url.host != nil else {
+            throw LegalicAPIError.invalidServer(raw)
+        }
+        return url
+    }
 
-        LegalicLogger.line(
-            "fetchTasks: готово, уникальных задач: \(collected.count) (API сообщило page_count=\(pageCountFromApi), запрошено страниц ≤\(cap))"
+    func invalidateTokens() {
+        tokens = nil
+    }
+
+    // MARK: - Вход
+
+    /// Проверяет пару логин/пароль и возвращает, кем сервер нас видит.
+    func signIn(server: URL, login: String, password: String) async throws -> LegalicAccountInfo {
+        tokens = nil
+        try await requestTokens(server: server, form: [
+            "grant_type": "password",
+            "login": login.trimmingCharacters(in: .whitespacesAndNewlines),
+            // Пароль не нормализуем: пробел может быть его настоящей частью.
+            "password": password,
+        ], credentialsKey: Self.credentialsKey(server: server, login: login, password: password))
+        return try await fetchAccountInfo(server: server, login: login, password: password)
+    }
+
+    func fetchAccountInfo(server: URL, login: String, password: String) async throws -> LegalicAccountInfo {
+        let data = try await get(
+            server: server, login: login, password: password,
+            path: "/sync/v1/me/info", query: []
         )
-        return collected
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let guid = object["guid"] as? String, !guid.isEmpty
+        else { throw LegalicAPIError.malformedResponse("в ответе me/info нет guid") }
+        return LegalicAccountInfo(
+            guid: guid,
+            fullName: (object["full_name"] as? String) ?? "",
+            isActive: (object["is_active"] as? Bool) ?? true
+        )
     }
 
-    private func requestAccessToken(baseURL: URL, apiKey: String, apiSecret: String) async throws -> String {
-        let requestedCacheKey = "\(baseURL.absoluteString)|\(apiKey)|\(apiSecret)"
-        if let cachedAccessToken,
-           let tokenExpiresAt,
-           tokenCacheKey == requestedCacheKey,
-           Date() < tokenExpiresAt.addingTimeInterval(-60) {
-            LegalicLogger.line("requestAccessToken: используем кэш токена до \(tokenExpiresAt)")
-            return cachedAccessToken
+    // MARK: - Лента
+
+    /// Страница ленты ресурса. `cursor == nil` — лента с начала.
+    ///
+    /// Испорченный курсор сервер отвечает `400`; для вызывающего это
+    /// `ProviderError.syncTokenExpired` — лента перечитывается с начала.
+    func fetchFeedPage<Record: Sendable>(
+        server: URL, login: String, password: String,
+        resource: String, cursor: String?, limit: Int = LegalicAPIClient.feedPageLimit,
+        decode: @Sendable ([String: Any]) -> Record?
+    ) async throws -> LegalicFeedPage<Record> {
+        var query = [URLQueryItem(name: "limit", value: String(max(1, min(limit, Self.feedPageLimit))))]
+        if let cursor, !cursor.isEmpty {
+            query.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        let data: Data
+        do {
+            data = try await get(
+                server: server, login: login, password: password,
+                path: "/sync/v1/\(resource)", query: query
+            )
+        } catch LegalicAPIError.httpStatus(400, _) where cursor != nil {
+            throw ProviderError.syncTokenExpired
         }
 
-        let tokenURL = baseURL.appendingPathComponent("token")
-        LegalicLogger.line("requestAccessToken: POST \(tokenURL.absoluteString)")
-        var request = URLRequest(url: tokenURL)
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw LegalicAPIError.malformedResponse("тело ответа ленты не объект JSON")
+        }
+        if root["page_count"] != nil || root["total_count"] != nil {
+            throw LegalicAPIError.malformedResponse("сервер отвечает старым постраничным форматом — нужен /sync/v1")
+        }
+        guard let rawItems = root["items"] as? [[String: Any]] else {
+            throw LegalicAPIError.malformedResponse("в ответе ленты нет items")
+        }
+        let revoked = (root["revoked"] as? [[String: Any]] ?? []).compactMap { $0["entity_guid"] as? String }
+        LegalicLogger.line("лента \(resource): записей \(rawItems.count), отзывов \(revoked.count), has_more=\(root["has_more"] ?? "?")")
+        return LegalicFeedPage(
+            items: rawItems.compactMap(decode),
+            revokedGuids: revoked,
+            nextCursor: root["next_cursor"] as? String,
+            hasMore: (root["has_more"] as? Bool) ?? false
+        )
+    }
+
+    // MARK: - Запись
+
+    /// `POST /sync/v1/<ресурс>`: создание (без `base_usn`) или правка (с ним).
+    ///
+    /// `409` возвращается значением с актуальной версией сервера — разбираться с
+    /// расхождением должен вызывающий, а не транспорт.
+    func save<Record: Sendable>(
+        server: URL, login: String, password: String,
+        resource: String, body: [String: any Sendable], idempotencyKey: String,
+        decode: @Sendable ([String: Any]) -> Record?
+    ) async throws -> LegalicWriteResult<Record> {
+        try await authorizeIfNeeded(server: server, login: login, password: password)
+
+        var attemptedReauth = false
+        while true {
+            var request = URLRequest(url: server.appendingPathComponent("sync/v1/\(resource)"))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+            if let token = tokens?.accessToken {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+            let (data, http) = try await perform(request)
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            LegalicLogger.line("POST \(resource): HTTP \(http.statusCode)")
+
+            switch http.statusCode {
+            case 200, 201:
+                return LegalicWriteResult(status: http.statusCode, item: (object?["item"] as? [String: Any]).flatMap(decode))
+            case 409:
+                if let item = object?["item"] as? [String: Any] {
+                    return LegalicWriteResult(status: 409, item: decode(item))
+                }
+                // Голая 409 — «первый запрос с этим ключом ещё выполняется»: повторим позже.
+                throw ProviderError.preconditionFailed
+            case 401 where !attemptedReauth:
+                attemptedReauth = true
+                // Access-токен отозван раньше срока: считаем его истёкшим, но
+                // refresh оставляем — продление дешевле повторного входа паролем.
+                tokens?.expiresAt = .distantPast
+                try await authorizeIfNeeded(server: server, login: login, password: password)
+                continue
+            case 403:
+                throw LegalicAPIError.forbidden
+            case 422:
+                let message = (object?["message"] as? String) ?? (object?["error"] as? String) ?? ""
+                if (object?["error"] as? String) == "dependency_missing" {
+                    throw LegalicAPIError.dependencyMissing(message)
+                }
+                throw LegalicAPIError.validationFailed(message)
+            default:
+                throw LegalicAPIError.httpStatus(http.statusCode, Self.errorText(from: data))
+            }
+        }
+    }
+
+    // MARK: - Токены
+
+    private static func credentialsKey(server: URL, login: String, password: String) -> String {
+        "\(server.absoluteString)|\(login.trimmingCharacters(in: .whitespacesAndNewlines))|\(password.hashValue)"
+    }
+
+    private func authorizeIfNeeded(server: URL, login: String, password: String) async throws {
+        let key = Self.credentialsKey(server: server, login: login, password: password)
+        if let tokens, tokens.credentialsKey == key,
+           tokens.expiresAt.timeIntervalSinceNow > Self.expiryMargin {
+            return
+        }
+        if let refresh = tokens?.refreshToken, tokens?.credentialsKey == key, !refresh.isEmpty {
+            do {
+                try await requestTokens(
+                    server: server,
+                    form: ["grant_type": "refresh_token", "refresh_token": refresh],
+                    credentialsKey: key
+                )
+                return
+            } catch {
+                // Протухший refresh — не повод сдаваться: пароль у нас есть.
+                tokens = nil
+            }
+        }
+        try await requestTokens(server: server, form: [
+            "grant_type": "password",
+            "login": login.trimmingCharacters(in: .whitespacesAndNewlines),
+            "password": password,
+        ], credentialsKey: key)
+    }
+
+    private func requestTokens(server: URL, form: [String: String], credentialsKey: String) async throws {
+        var request = URLRequest(url: server.appendingPathComponent("token"))
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
-
-        var components = URLComponents()
-        components.queryItems = [
-            URLQueryItem(name: "grant_type", value: "client_credentials"),
-            URLQueryItem(name: "api_key", value: apiKey),
-            URLQueryItem(name: "api_secret", value: apiSecret),
-        ]
-        guard let body = components.percentEncodedQuery?.data(using: .utf8) else {
-            LegalicLogger.line("requestAccessToken: ОШИБКА — не собрать тело form-urlencoded")
-            throw LegalicAPIError.invalidURL
-        }
-        request.httpBody = body
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await urlSession.data(for: request)
-        } catch {
-            LegalicLogger.line("requestAccessToken: сеть/URLSession: \(error.localizedDescription)")
-            throw error
-        }
-        LegalicLogger.line("requestAccessToken: ответ, байт: \(data.count)")
-        guard let http = response as? HTTPURLResponse else {
-            LegalicLogger.line("requestAccessToken: ОШИБКА — ответ не HTTP")
-            throw LegalicAPIError.noData
-        }
-        LegalicLogger.line("requestAccessToken: HTTP \(http.statusCode)")
-        guard (200 ... 299).contains(http.statusCode) else {
-            let bodyText = String(data: data, encoding: .utf8) ?? ""
-            LegalicLogger.line("requestAccessToken: ошибка \(http.statusCode), тело: \(bodyText.prefix(600))")
-            throw LegalicAPIError.httpStatus(http.statusCode, bodyText)
-        }
-
-        let decoder = JSONDecoder()
-        let envelope: LegalicTokenEnvelope
-        do {
-            envelope = try decoder.decode(LegalicTokenEnvelope.self, from: data)
-        } catch {
-            LegalicLogger.line("requestAccessToken: JSON токена не разобран: \(error.localizedDescription)")
-            LegalicLogger.debugBodyPreview(data, maxBytes: 800)
-            throw LegalicAPIError.decodingFailed(error.localizedDescription)
-        }
-        guard let token = envelope.accessToken, !token.isEmpty else {
-            LegalicLogger.line("requestAccessToken: в JSON нет access_token")
-            LegalicLogger.debugBodyPreview(data, maxBytes: 800)
-            throw LegalicAPIError.tokenMissing
-        }
-
-        cachedAccessToken = token
-        tokenCacheKey = requestedCacheKey
-        if let expires = envelope.expiresIn {
-            tokenExpiresAt = Date().addingTimeInterval(TimeInterval(expires))
-            LegalicLogger.line("requestAccessToken: expires_in=\(expires) сек")
-        } else {
-            tokenExpiresAt = Date().addingTimeInterval(3600)
-            LegalicLogger.line("requestAccessToken: expires_in не указан, кэш ~1 ч")
-        }
-
-        return token
-    }
-
-    private static func tasksURLAppendingPagination(base: URL, page: Int, perPage: Int) -> URL {
-        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
-            return base
-        }
-        var items = components.queryItems ?? []
-        func setQuery(_ name: String, _ value: String) {
-            items.removeAll { $0.name == name }
-            items.append(URLQueryItem(name: name, value: value))
-        }
-        setQuery("page", String(max(1, page)))
-        setQuery("per_page", String(max(1, perPage)))
-        components.queryItems = items
-        return components.url ?? base
-    }
-
-    private func downloadTasksData(tasksURL: URL, accessToken: String) async throws -> Data {
-        LegalicLogger.line("downloadTasks: GET \(tasksURL.absoluteString)")
-        var request = URLRequest(url: tasksURL)
-        request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = Self.formBody(form)
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await urlSession.data(for: request)
-        } catch {
-            LegalicLogger.line("downloadTasks: сеть/URLSession: \(error.localizedDescription)")
-            throw error
+        LegalicLogger.line("POST /token grant_type=\(form["grant_type"] ?? "?")")
+        let (data, http) = try await perform(request)
+        guard http.statusCode == 200 else {
+            if http.statusCode == 403 { throw LegalicAPIError.accountDeactivated }
+            throw LegalicAPIError.authenticationFailed(Self.authenticationErrorText(from: data, status: http.statusCode))
         }
-        LegalicLogger.line("downloadTasks: ответ, байт: \(data.count)")
-        guard let http = response as? HTTPURLResponse else {
-            LegalicLogger.line("downloadTasks: ОШИБКА — ответ не HTTP")
-            throw LegalicAPIError.noData
-        }
-        LegalicLogger.line("downloadTasks: HTTP \(http.statusCode)")
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let accessToken = object["access_token"] as? String, !accessToken.isEmpty
+        else { throw LegalicAPIError.authenticationFailed("в ответе нет access_token") }
 
-        if http.statusCode == 401 {
-            LegalicLogger.line("downloadTasks: 401 — сброс кэша токена")
-            invalidateToken()
-        }
-
-        guard (200 ... 299).contains(http.statusCode) else {
-            let bodyText = String(data: data, encoding: .utf8) ?? ""
-            LegalicLogger.line("downloadTasks: ошибка \(http.statusCode)")
-            LegalicLogger.debugBodyPreview(data, maxBytes: 1500)
-            throw LegalicAPIError.httpStatus(http.statusCode, bodyText)
-        }
-
-        if data.isEmpty {
-            LegalicLogger.line("downloadTasks: предупреждение — тело ответа пустое")
-        }
-
-        return data
+        let lifetime = TimeInterval((object["expires_in"] as? Int) ?? 86_400)
+        tokens = TokenState(
+            accessToken: accessToken,
+            refreshToken: (object["refresh_token"] as? String) ?? tokens?.refreshToken,
+            expiresAt: Date().addingTimeInterval(lifetime),
+            credentialsKey: credentialsKey
+        )
+        LegalicLogger.line("токен получен, префикс \(LegalicLogger.maskedTokenPrefix(accessToken)), expires_in=\(Int(lifetime))")
     }
-}
 
-private struct LegalicTokenEnvelope: Decodable {
-    let accessToken: String?
-    let expiresIn: Int?
-    let refreshToken: String?
+    // MARK: - HTTP
 
-    enum CodingKeys: String, CodingKey {
-        case accessToken = "access_token"
-        case expiresIn = "expires_in"
-        case refreshToken = "refresh_token"
+    private func get(
+        server: URL, login: String, password: String,
+        path: String, query: [URLQueryItem]
+    ) async throws -> Data {
+        try await authorizeIfNeeded(server: server, login: login, password: password)
+
+        var attemptedReauth = false
+        while true {
+            guard var components = URLComponents(url: server, resolvingAgainstBaseURL: false) else {
+                throw LegalicAPIError.invalidServer(server.absoluteString)
+            }
+            components.path = (components.path + path).replacingOccurrences(of: "//", with: "/")
+            components.queryItems = query.isEmpty ? nil : query
+            guard let url = components.url else { throw LegalicAPIError.invalidServer(server.absoluteString) }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if let token = tokens?.accessToken {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+
+            let (data, http) = try await perform(request)
+            switch http.statusCode {
+            case 200 ... 299:
+                return data
+            case 401 where !attemptedReauth:
+                attemptedReauth = true
+                // Access-токен отозван раньше срока: считаем его истёкшим, но
+                // refresh оставляем — продление дешевле повторного входа паролем.
+                tokens?.expiresAt = .distantPast
+                try await authorizeIfNeeded(server: server, login: login, password: password)
+                continue
+            case 403:
+                throw LegalicAPIError.forbidden
+            default:
+                throw LegalicAPIError.httpStatus(http.statusCode, Self.errorText(from: data))
+            }
+        }
+    }
+
+    private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw LegalicAPIError.malformedResponse("ответ не HTTP")
+        }
+        return (data, http)
+    }
+
+    private static func formBody(_ form: [String: String]) -> Data {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "+&=")
+        let pairs = form.map { key, value in
+            "\(key.addingPercentEncoding(withAllowedCharacters: allowed) ?? key)=\(value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value)"
+        }
+        return Data(pairs.joined(separator: "&").utf8)
+    }
+
+    private static func errorText(from data: Data) -> String? {
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let message = object["message"] as? String, !message.isEmpty { return message }
+            if let error = object["error"] as? String, !error.isEmpty { return error }
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func authenticationErrorText(from data: Data, status: Int) -> String {
+        let text = errorText(from: data)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        switch status {
+        case 400 where text.lowercased().contains("credential") || text.lowercased().contains("invalid"):
+            return "неверная почта или пароль"
+        case 400:
+            return text.isEmpty ? "сервер отклонил запрос (400)" : text
+        default:
+            return text.isEmpty ? "HTTP \(status)" : "\(text) (HTTP \(status))"
+        }
     }
 }

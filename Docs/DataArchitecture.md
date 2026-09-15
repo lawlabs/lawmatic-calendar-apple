@@ -241,7 +241,7 @@ JSON-файлы подходят как ближайший production-baseline �
 
 ## Внешние календари
 
-Google Calendar и Apple Calendar реализованы как двусторонние коннекторы поверх общего LWW sync-engine. LEGALIC подключён через тот же контракт, но остаётся read-only до появления документированного CRUD API. Детали: [CalendarSync.md](./CalendarSync.md) и [LegalicIntegration.md](./LegalicIntegration.md).
+Google Calendar и Apple Calendar реализованы как двусторонние коннекторы поверх общего LWW sync-engine. LEGALIC подключён через тот же контракт по курсорному API `/sync/v1` (вход по почте и паролю); запись задач включается в настройках. Детали: [CalendarSync.md](./CalendarSync.md) и [LegalicIntegration.md](./LegalicIntegration.md).
 
 ## Итоговая рекомендация
 

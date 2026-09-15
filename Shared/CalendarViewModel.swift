@@ -43,7 +43,6 @@ final class CalendarViewModel {
             repository: repository,
             providers: providers ?? ProviderRegistry.shared
         )
-        sync.visibleDateRange = { [unowned self] in self.visibleCalendarDateRange() }
     }
 
     static func preview() -> CalendarViewModel {

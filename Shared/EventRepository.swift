@@ -11,7 +11,7 @@ import SwiftUI
 @MainActor
 final class EventRepository {
     var events: [CalendarEvent] = [] {
-        didSet { rebuildEventIndex() }
+        didSet { updateEventIndex(from: oldValue) }
     }
     var calendars: [CalendarItem] = [] {
         didSet { rebuildCalendarIndex() }
@@ -57,26 +57,49 @@ final class EventRepository {
 
     // MARK: - Индексы
 
+    /// Обновляет индекс по дням после изменения `events`.
+    ///
+    /// Типичная правка — одно событие (drag, ввод в инспекторе, создание,
+    /// удаление), а полная пересборка индекса на десятках тысяч событий стоит
+    /// ~100 мс главного потока. Поэтому сначала ищем узкую разницу и правим
+    /// только затронутые дни; полная пересборка — для массовых замен (синк).
+    private func updateEventIndex(from oldValue: [CalendarEvent]) {
+        let new = events
+        if new.count == oldValue.count {
+            // Правка на месте: одно или несколько событий с теми же позициями.
+            var changed: [(old: CalendarEvent, new: CalendarEvent)] = []
+            for index in new.indices where new[index] != oldValue[index] {
+                changed.append((oldValue[index], new[index]))
+                if changed.count > 8 { return rebuildEventIndex() }
+            }
+            for pair in changed {
+                removeFromIndex(pair.old)
+                insertIntoIndex(pair.new)
+            }
+            return
+        }
+        if new.count == oldValue.count + 1, let last = new.last, new.dropLast().elementsEqual(oldValue) {
+            insertIntoIndex(last)
+            return
+        }
+        if new.count == oldValue.count - 1,
+           let removedIndex = oldValue.indices.first(where: { index in
+               index >= new.count || new[index] != oldValue[index]
+           }),
+           new.elementsEqual(oldValue[..<removedIndex] + oldValue[(removedIndex + 1)...]) {
+            removeFromIndex(oldValue[removedIndex])
+            return
+        }
+        rebuildEventIndex()
+    }
+
     private func rebuildEventIndex() {
-        let calendar = Calendar.current
         var index: [Date: [CalendarEvent]] = [:]
         index.reserveCapacity(events.count)
 
         for event in events {
-            let firstDay = calendar.startOfDay(for: event.startDate)
-            var lastDay = calendar.startOfDay(for: max(event.endDate, event.startDate))
-            // Событие, заканчивающееся ровно в полночь, не относится к следующему дню.
-            if lastDay > firstDay, event.endDate == lastDay {
-                lastDay = calendar.date(byAdding: .day, value: -1, to: lastDay) ?? firstDay
-            }
-
-            var day = firstDay
-            var guardCounter = 0
-            while day <= lastDay, guardCounter < 3_660 {
+            for day in Self.days(covering: event) {
                 index[day, default: []].append(event)
-                guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
-                day = next
-                guardCounter += 1
             }
         }
 
@@ -84,6 +107,43 @@ final class EventRepository {
             index[key]?.sort { $0.startDate < $1.startDate }
         }
         eventsByDay = index
+    }
+
+    private func insertIntoIndex(_ event: CalendarEvent) {
+        for day in Self.days(covering: event) {
+            var bucket = eventsByDay[day] ?? []
+            let position = bucket.firstIndex { $0.startDate > event.startDate } ?? bucket.endIndex
+            bucket.insert(event, at: position)
+            eventsByDay[day] = bucket
+        }
+    }
+
+    private func removeFromIndex(_ event: CalendarEvent) {
+        for day in Self.days(covering: event) {
+            guard var bucket = eventsByDay[day] else { continue }
+            bucket.removeAll { $0.id == event.id }
+            eventsByDay[day] = bucket.isEmpty ? nil : bucket
+        }
+    }
+
+    /// Начала календарных дней, которые покрывает событие.
+    /// Событие, заканчивающееся ровно в полночь, не относится к следующему дню.
+    private static func days(covering event: CalendarEvent) -> [Date] {
+        let calendar = Calendar.current
+        let firstDay = calendar.startOfDay(for: event.startDate)
+        var lastDay = calendar.startOfDay(for: max(event.endDate, event.startDate))
+        if lastDay > firstDay, event.endDate == lastDay {
+            lastDay = calendar.date(byAdding: .day, value: -1, to: lastDay) ?? firstDay
+        }
+
+        var days: [Date] = [firstDay]
+        var day = firstDay
+        while day < lastDay, days.count < 3_660 {
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+            days.append(day)
+        }
+        return days
     }
 
     private func rebuildCalendarIndex() {

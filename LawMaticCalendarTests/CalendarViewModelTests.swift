@@ -489,3 +489,75 @@ final class CalendarViewModelUndoTests: XCTestCase {
         XCTAssertEqual(viewModel.events.first?.syncState, .clean)
     }
 }
+
+// MARK: - Инкрементальный индекс
+
+@MainActor
+final class EventRepositoryIndexTests: XCTestCase {
+    private let calendars = CalendarSeedData.defaultCalendars()
+
+    private func makeRepository(events: [CalendarEvent]) -> EventRepository {
+        EventRepository(
+            store: InMemoryCalendarStore(snapshot: CalendarStoreSnapshot(calendars: calendars, events: events)),
+            saveDebounce: .seconds(60)
+        )
+    }
+
+    private func event(_ title: String, day: Int, hour: Int, durationHours: Int = 1) -> CalendarEvent {
+        let calendar = Calendar.current
+        let base = calendar.date(from: DateComponents(year: 2026, month: 9, day: day, hour: hour))!
+        return CalendarEvent(
+            title: title,
+            startDate: base,
+            endDate: base.addingTimeInterval(TimeInterval(durationHours * 3600)),
+            calendarId: calendars[0].id
+        )
+    }
+
+    private func day(_ day: Int) -> Date {
+        Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: day))!
+    }
+
+    func testInPlaceEditMovesEventBetweenDaysAndKeepsOrder() {
+        let repository = makeRepository(events: [event("A", day: 10, hour: 9), event("B", day: 10, hour: 12)])
+
+        var moved = repository.events[1]
+        moved.startDate = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 11, hour: 8))!
+        moved.endDate = moved.startDate.addingTimeInterval(3600)
+        repository.events[1] = moved
+
+        XCTAssertEqual(repository.events(for: day(10)).map(\.title), ["A"])
+        XCTAssertEqual(repository.events(for: day(11)).map(\.title), ["B"])
+
+        var earlier = repository.events[0]
+        earlier.startDate = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 11, hour: 7))!
+        earlier.endDate = earlier.startDate.addingTimeInterval(3600)
+        repository.events[0] = earlier
+
+        XCTAssertTrue(repository.events(for: day(10)).isEmpty)
+        XCTAssertEqual(repository.events(for: day(11)).map(\.title), ["A", "B"], "Вставка сохраняет сортировку по началу")
+    }
+
+    func testAppendAndRemoveUpdateIndexIncrementally() {
+        let repository = makeRepository(events: [event("A", day: 10, hour: 9)])
+
+        repository.events.append(event("C", day: 10, hour: 8, durationHours: 30))
+        XCTAssertEqual(repository.events(for: day(10)).map(\.title), ["C", "A"])
+        XCTAssertEqual(repository.events(for: day(11)).map(\.title), ["C"], "Многодневное событие попадает во все дни")
+
+        repository.events.removeAll { $0.title == "C" }
+        XCTAssertEqual(repository.events(for: day(10)).map(\.title), ["A"])
+        XCTAssertFalse(repository.hasEvents(on: day(11)))
+    }
+
+    func testBulkReplacementRebuildsIndex() {
+        let repository = makeRepository(events: [event("A", day: 10, hour: 9)])
+
+        repository.events = (1...20).map { event("E\($0)", day: 12, hour: $0 % 12) }
+
+        XCTAssertTrue(repository.events(for: day(10)).isEmpty)
+        XCTAssertEqual(repository.events(for: day(12)).count, 20)
+        let starts = repository.events(for: day(12)).map(\.startDate)
+        XCTAssertEqual(starts, starts.sorted())
+    }
+}

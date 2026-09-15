@@ -25,22 +25,15 @@ final class CalendarSyncCoordinator {
 
     @ObservationIgnored private let repository: EventRepository
     @ObservationIgnored private let providers: any CalendarProviderResolving
-    /// Видимый в UI диапазон дат — для провайдеров, которые тянут только его (LEGALIC).
-    @ObservationIgnored var visibleDateRange: @MainActor () -> ClosedRange<Date>
     @ObservationIgnored private var periodicSyncTask: Task<Void, Never>?
     @ObservationIgnored private var eventStoreChangesTask: Task<Void, Never>?
 
     /// За сколько до конца окна первичной выборки делать полный ресинк.
     static let syncWindowRefreshThreshold: TimeInterval = 180 * 24 * 3600
 
-    init(
-        repository: EventRepository,
-        providers: any CalendarProviderResolving,
-        visibleDateRange: @escaping @MainActor () -> ClosedRange<Date> = { Date() ... Date() }
-    ) {
+    init(repository: EventRepository, providers: any CalendarProviderResolving) {
         self.repository = repository
         self.providers = providers
-        self.visibleDateRange = visibleDateRange
     }
 
     var isSyncing: Bool { !syncingProviderIDs.isEmpty }
@@ -151,16 +144,21 @@ final class CalendarSyncCoordinator {
 
         let remoteCalendars = try await provider.listRemoteCalendars()
         mergeRemoteCalendars(remoteCalendars, provider: provider)
+        let fullResyncRequested = provider.requiresFullResync
 
         for remoteCalendar in remoteCalendars {
             guard let localIndex = repository.calendars.firstIndex(where: {
                 $0.externalProvider == provider.id && $0.externalId == remoteCalendar.id
             }) else { continue }
 
-            let requestedRange: ClosedRange<Date>? = provider.id == .legalic
-                ? visibleDateRange()
-                : nil
+            // Диапазон дат провайдеры не получают: Google и LEGALIC ведут
+            // инкремент курсором, Apple читает своё окно сам.
+            let requestedRange: ClosedRange<Date>? = nil
             var syncToken = repository.calendars[localIndex].syncToken
+            if fullResyncRequested {
+                syncToken = nil
+                repository.calendars[localIndex].syncToken = nil
+            }
             if let windowEnd = repository.calendars[localIndex].syncWindowEnd,
                windowEnd.timeIntervalSinceNow < Self.syncWindowRefreshThreshold {
                 // Окно первичной выборки заканчивается — инкременты по токену
@@ -210,6 +208,9 @@ final class CalendarSyncCoordinator {
             repository.save(.calendars)
             repository.save(.events)
             repository.save(.pendingDeletions)
+        }
+        if fullResyncRequested {
+            provider.fullResyncDidComplete()
         }
 
         // Сначала pull + LWW выше, и только затем push тех локальных

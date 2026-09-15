@@ -14,10 +14,18 @@ protocol CalendarProvider: AnyObject {
     func proposedRemoteEventID(for localEvent: CalendarEvent) -> String?
     func pushUpsert(localEvent: CalendarEvent, to remoteCalendar: RemoteCalendar) async throws -> PushedRemoteEvent
     func pushDelete(_ ref: RemoteEventRef, etag: String?) async throws
+
+    /// Провайдер просит перечитать свои ленты с начала (сменились правила
+    /// отбора, пользователь нажал «перечитать»). Координатор сбрасывает
+    /// курсоры и после успешного полного чтения зовёт `fullResyncDidComplete()`.
+    var requiresFullResync: Bool { get }
+    func fullResyncDidComplete()
 }
 
 extension CalendarProvider {
     func proposedRemoteEventID(for localEvent: CalendarEvent) -> String? { nil }
+    var requiresFullResync: Bool { false }
+    func fullResyncDidComplete() {}
 }
 
 struct RemoteCalendar: Identifiable, Hashable, Sendable {

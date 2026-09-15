@@ -3,48 +3,62 @@ import SwiftUI
 struct LegalicSettingsPane: View {
     @ObservedObject var provider: LegalicProvider
     @State private var connectionError: String?
+    @State private var isSigningIn = false
+
+    private var isSignedIn: Bool { provider.status.isSignedIn }
 
     var body: some View {
         Form {
             Section("LEGALIC") {
-                Toggle("Синхронизировать задачи", isOn: $provider.isEnabled)
-                    .disabled(!provider.hasCredentials)
-                Label("Интеграция доступна только для чтения: API записи задач в проекте не описан.", systemImage: "info.circle")
+                Toggle("Синхронизировать задачи и сроки", isOn: $provider.isEnabled)
+                    .disabled(!isSignedIn)
+                Text("Задачи и сроки по делам читаются лентой /sync/v1 по учётной записи LEGALIC. Первый обмен читает всю ленту, дальше — только изменения. В календарь попадают записи не старше \(LegalicProvider.historyHorizonYears) г.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                HStack {
+                    Text(provider.requiresFullResync
+                         ? "При следующей синхронизации лента будет прочитана с начала."
+                         : "Если данные разошлись с сервером, ленту можно перечитать с начала.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Перечитать заново") { provider.requestFullResync() }
+                        .disabled(!isSignedIn || provider.requiresFullResync)
+                }
             }
 
-            Section("Ключи API") {
-                TextField("API Key", text: $provider.apiKey)
+            Section("Учётная запись") {
+                TextField("Сервер", text: $provider.server, prompt: Text(LegalicProvider.defaultServer))
                     .textFieldStyle(.roundedBorder)
-                SecureField("API Secret", text: $provider.apiSecret)
+                    .disabled(isSignedIn)
+                    .accessibilityLabel("Сервер LEGALIC")
+                TextField("Почта", text: $provider.login)
                     .textFieldStyle(.roundedBorder)
-                Text("API Key и API Secret хранятся в Keychain, а не в UserDefaults.")
+                    .disabled(isSignedIn)
+                    .textContentType(.username)
+                    .accessibilityLabel("Почта учётной записи")
+                SecureField("Пароль", text: $provider.password)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isSignedIn)
+                    .textContentType(.password)
+                    .onSubmit { signInIfPossible() }
+                    .accessibilityLabel("Пароль")
+                Text("Пароль попадает в Связку ключей только после того, как сервер подтвердил вход. В настройках приложения он не хранится.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 connectionControls
             }
 
-            Section("Сервер") {
-                TextField("Базовый URL", text: $provider.apiBaseURL)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Путь к списку задач", text: $provider.tasksListPath)
-                    .textFieldStyle(.roundedBorder)
-
-                Toggle("Запрашивать видимый период", isOn: $provider.syncTasksInVisibleRangeOnly)
-                HStack {
-                    TextField("Параметр from", text: $provider.tasksQueryParamFrom)
-                    TextField("Параметр to", text: $provider.tasksQueryParamTo)
-                }
-                Stepper("Страниц за синк: \(provider.taskSyncMaxPages)", value: $provider.taskSyncMaxPages, in: 1 ... 100)
-                Stepper("Задач на страницу: \(provider.taskSyncPerPage)", value: $provider.taskSyncPerPage, in: 10 ... 500, step: 10)
-                Text("LEGALIC может вернуть только первые N страниц. Поэтому клиент делает точечный upsert и не считает отсутствующую задачу удалённой.")
+            Section("Запись") {
+                Toggle("Разрешить изменять задачи из календаря", isOn: $provider.allowsWriteBack)
+                    .disabled(!isSignedIn)
+                Text("Когда включено, создание, перенос и удаление событий в календаре «LEGALIC · Задачи» уходят на сервер (POST /sync/v1/task с проверкой версии). Сроки по делам — только для чтения.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
             if let connectionError {
-                Section { Text(connectionError).foregroundStyle(.red) }
+                Section { Text(connectionError).foregroundStyle(.red).textSelection(.enabled) }
             }
         }
         .formStyle(.grouped)
@@ -53,20 +67,43 @@ struct LegalicSettingsPane: View {
     @ViewBuilder
     private var connectionControls: some View {
         HStack {
-            Text(provider.status.shortDescription)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            if provider.status.isSignedIn {
-                Button("Отключить") { Task { await provider.signOut() } }
+            if isSigningIn {
+                ProgressView().controlSize(.small)
+                Text("Проверяем вход…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else {
-                Button("Проверить и подключить") {
+                Text(provider.status.shortDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            if isSignedIn {
+                Button("Выйти") {
                     Task {
-                        do { try await provider.signIn(); connectionError = nil }
-                        catch { connectionError = error.localizedDescription }
+                        await provider.signOut()
+                        connectionError = nil
                     }
                 }
-                .disabled(!provider.hasCredentials)
+            } else {
+                Button("Войти") { signInIfPossible() }
+                    .disabled(!provider.canSignIn || isSigningIn)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+
+    private func signInIfPossible() {
+        guard provider.canSignIn, !isSigningIn else { return }
+        isSigningIn = true
+        Task {
+            defer { isSigningIn = false }
+            do {
+                try await provider.signIn()
+                connectionError = nil
+            } catch {
+                connectionError = error.localizedDescription
             }
         }
     }

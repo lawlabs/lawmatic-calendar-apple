@@ -143,9 +143,14 @@ private struct EventEditorForm: View {
         Form {
             if isReadOnly {
                 Section {
-                    Label("Этот календарь доступен только для чтения", systemImage: "lock.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Label(
+                        event.isReadOnly
+                            ? "Экземпляр повторяющегося события: меняется только в Календаре"
+                            : "Этот календарь доступен только для чтения",
+                        systemImage: "lock.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
 

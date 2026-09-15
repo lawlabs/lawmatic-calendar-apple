@@ -169,7 +169,8 @@ enum CalendarSyncMerger {
             pendingCreateRemoteId: nil,
             localUpdatedAt: remote.updatedAt,
             remoteUpdatedAt: remote.updatedAt,
-            syncState: .clean
+            syncState: .clean,
+            isReadOnly: remote.isReadOnly
         )
     }
 }

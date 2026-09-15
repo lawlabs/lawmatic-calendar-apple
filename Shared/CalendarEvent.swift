@@ -17,6 +17,9 @@ struct CalendarEvent: Identifiable, Codable, Equatable, Sendable {
     var localUpdatedAt: Date
     var remoteUpdatedAt: Date?
     var syncState: EventSyncState
+    /// Запись нельзя менять из приложения независимо от прав календаря
+    /// (например, экземпляр повторяющегося события Apple Calendar).
+    var isReadOnly: Bool
 
     init(
         id: UUID = UUID(),
@@ -34,7 +37,8 @@ struct CalendarEvent: Identifiable, Codable, Equatable, Sendable {
         pendingCreateRemoteId: String? = nil,
         localUpdatedAt: Date = Date(),
         remoteUpdatedAt: Date? = nil,
-        syncState: EventSyncState = .clean
+        syncState: EventSyncState = .clean,
+        isReadOnly: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -52,6 +56,36 @@ struct CalendarEvent: Identifiable, Codable, Equatable, Sendable {
         self.localUpdatedAt = localUpdatedAt
         self.remoteUpdatedAt = remoteUpdatedAt
         self.syncState = syncState
+        self.isReadOnly = isReadOnly
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, startDate, endDate, isAllDay, notes, location, calendarId
+        case externalId, externalProvider, externalCalendarId, externalETag, pendingCreateRemoteId
+        case localUpdatedAt, remoteUpdatedAt, syncState, isReadOnly
+    }
+
+    /// Ручное декодирование ради обратной совместимости файлов: новые
+    /// необязательные поля читаются через `decodeIfPresent`.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        startDate = try container.decode(Date.self, forKey: .startDate)
+        endDate = try container.decode(Date.self, forKey: .endDate)
+        isAllDay = try container.decodeIfPresent(Bool.self, forKey: .isAllDay) ?? false
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        location = try container.decodeIfPresent(String.self, forKey: .location) ?? ""
+        calendarId = try container.decode(UUID.self, forKey: .calendarId)
+        externalId = try container.decodeIfPresent(String.self, forKey: .externalId)
+        externalProvider = try container.decodeIfPresent(ProviderID.self, forKey: .externalProvider)
+        externalCalendarId = try container.decodeIfPresent(String.self, forKey: .externalCalendarId)
+        externalETag = try container.decodeIfPresent(String.self, forKey: .externalETag)
+        pendingCreateRemoteId = try container.decodeIfPresent(String.self, forKey: .pendingCreateRemoteId)
+        localUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .localUpdatedAt) ?? Date()
+        remoteUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .remoteUpdatedAt)
+        syncState = try container.decodeIfPresent(EventSyncState.self, forKey: .syncState) ?? .clean
+        isReadOnly = try container.decodeIfPresent(Bool.self, forKey: .isReadOnly) ?? false
     }
 }
 

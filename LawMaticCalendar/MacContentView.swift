@@ -167,17 +167,38 @@ struct MacContentView: View {
             Text(viewModel.syncError?.message ?? "")
                 .font(.callout)
                 .textSelection(.enabled)
-            HStack {
-                Spacer()
-                Button("Скрыть") {
-                    viewModel.syncError = nil
-                    isSyncErrorPopoverPresented = false
+            if let request = viewModel.pendingMassDeletion {
+                Divider()
+                Text("Отправить \(request.count) удалений в \(request.providerID.displayName)? Отменить их потом будет нельзя.")
+                    .font(.callout)
+                HStack {
+                    Spacer()
+                    Button("Отменить удаления") {
+                        viewModel.sync.discardQueuedDeletions(for: request.providerID)
+                        viewModel.syncError = nil
+                        isSyncErrorPopoverPresented = false
+                        Task { await viewModel.syncAllProviders() }
+                    }
+                    Button("Удалить \(request.count)", role: .destructive) {
+                        viewModel.sync.confirmMassDeletion(for: request.providerID)
+                        viewModel.syncError = nil
+                        isSyncErrorPopoverPresented = false
+                        Task { await viewModel.syncAllProviders() }
+                    }
                 }
-                Button("Повторить") {
-                    isSyncErrorPopoverPresented = false
-                    Task { await viewModel.syncAllProviders() }
+            } else {
+                HStack {
+                    Spacer()
+                    Button("Скрыть") {
+                        viewModel.syncError = nil
+                        isSyncErrorPopoverPresented = false
+                    }
+                    Button("Повторить") {
+                        isSyncErrorPopoverPresented = false
+                        Task { await viewModel.syncAllProviders() }
+                    }
+                    .keyboardShortcut(.defaultAction)
                 }
-                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(16)

@@ -14,6 +14,14 @@ struct AppleSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Запись") {
+                Toggle("Разрешить изменять события Apple Calendar из приложения", isOn: $provider.allowsWriteBack)
+                    .disabled(!provider.status.isSignedIn)
+                Text("Выключено — системные календари только читаются: ни перенос, ни удаление из приложения в них не попадут. Включено — уходят только ваши собственные правки по одному событию; повторяющиеся события в любом случае не меняются. Больше \(CalendarSyncCoordinator.massDeletionThreshold) удалений за раз не отправляются без подтверждения.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Доступ") {
                 HStack {
                     Text(provider.status.shortDescription)

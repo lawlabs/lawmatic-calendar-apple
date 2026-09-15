@@ -16,6 +16,8 @@ enum ProviderError: LocalizedError {
     case remoteCalendarNotFound(remoteID: String)
     case syncTokenExpired
     case preconditionFailed
+    /// Слишком много удалений за один прогон — без явного подтверждения не отправляем.
+    case massDeletionBlocked(provider: ProviderID, count: Int)
     case invalidResponse(String)
     case httpStatus(Int, String?)
     case underlying(String)
@@ -38,6 +40,8 @@ enum ProviderError: LocalizedError {
             return "Курсор синхронизации устарел; требуется полная синхронизация."
         case .preconditionFailed:
             return "Событие изменилось на сервере во время синхронизации. Локальная операция сохранена и будет повторена после следующего чтения."
+        case .massDeletionBlocked(let provider, let count):
+            return "В очереди \(count) удалений для \(provider.displayName). Такое количество не отправляется автоматически: подтвердите удаление или отмените его."
         case .invalidResponse(let message), .underlying(let message):
             return message
         case .httpStatus(let code, let body):

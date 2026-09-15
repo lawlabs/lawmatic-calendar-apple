@@ -359,3 +359,153 @@ final class CalendarSyncCoordinatorTests: XCTestCase {
         XCTAssertTrue(provider.fetchRequests.isEmpty)
     }
 }
+
+// MARK: - Предохранители от массового удаления и записи
+
+@MainActor
+final class CalendarSyncSafetyTests: XCTestCase {
+    private let remoteCalendar = RemoteCalendar(id: "primary", providerID: .google, title: "Основной", colorHex: nil, isWritable: true)
+
+    private func googleCalendar() -> CalendarItem {
+        CalendarItem(
+            name: "Основной", color: .blue, accountName: "Mock",
+            externalProvider: .google, externalId: "primary", isWritable: true, syncToken: "token-1"
+        )
+    }
+
+    private func remoteEvents(_ count: Int, calendarID: UUID) -> [CalendarEvent] {
+        (0 ..< count).map { index in
+            CalendarEvent(
+                title: "Событие \(index)",
+                startDate: Date().addingTimeInterval(Double(index) * 3600),
+                endDate: Date().addingTimeInterval(Double(index) * 3600 + 1800),
+                calendarId: calendarID,
+                externalId: "r-\(index)", externalProvider: .google, externalCalendarId: "primary",
+                externalETag: "e\(index)", syncState: .clean
+            )
+        }
+    }
+
+    private func makeStack(events: [CalendarEvent], calendars: [CalendarItem]) -> (CalendarViewModel, MockCalendarProvider) {
+        let provider = MockCalendarProvider()
+        provider.remoteCalendars = [remoteCalendar]
+        let store = InMemoryCalendarStore(snapshot: CalendarStoreSnapshot(calendars: calendars, events: events))
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([provider]), saveDebounce: .seconds(60))
+        return (viewModel, provider)
+    }
+
+    func testPullNeverProducesRemoteDeletionsOrWrites() async throws {
+        let calendar = googleCalendar()
+        let events = remoteEvents(30, calendarID: calendar.id)
+        let (viewModel, provider) = makeStack(events: events, calendars: [calendar])
+        // Полный снимок с сервера без единой записи: локальные копии удаляются...
+        provider.pages["primary"] = [nil: SyncBatch(upserts: [], deletes: [], nextPageToken: nil, nextSyncToken: "t2", kind: .fullSnapshot)]
+        viewModel.repository.calendars[0].syncToken = nil
+
+        await viewModel.syncAllProviders()
+
+        XCTAssertTrue(viewModel.events.isEmpty, "Локально события ушли вслед за сервером")
+        // ...но на сервер при этом не уходит ни одного удаления или правки.
+        XCTAssertTrue(provider.pushedDeletes.isEmpty)
+        XCTAssertTrue(provider.pushedUpserts.isEmpty)
+        XCTAssertTrue(viewModel.pendingDeletions.isEmpty)
+    }
+
+    func testMassDeletionIsBlockedUntilConfirmed() async throws {
+        let calendar = googleCalendar()
+        let events = remoteEvents(CalendarSyncCoordinator.massDeletionThreshold + 5, calendarID: calendar.id)
+        let (viewModel, provider) = makeStack(events: events, calendars: [calendar])
+
+        for event in events { viewModel.deleteEvent(event) }
+        XCTAssertEqual(viewModel.pendingDeletions.count, events.count)
+
+        await viewModel.syncAllProviders()
+
+        XCTAssertTrue(provider.pushedDeletes.isEmpty, "Без подтверждения ничего не удалено")
+        XCTAssertEqual(viewModel.pendingMassDeletion, .init(providerID: .google, count: events.count))
+        XCTAssertNotNil(viewModel.syncError)
+        XCTAssertEqual(viewModel.pendingDeletions.count, events.count, "Очередь сохранена для решения пользователя")
+
+        viewModel.sync.confirmMassDeletion(for: .google)
+        await viewModel.syncAllProviders()
+
+        XCTAssertEqual(provider.pushedDeletes.count, events.count)
+        XCTAssertTrue(viewModel.pendingDeletions.isEmpty)
+        XCTAssertNil(viewModel.pendingMassDeletion)
+    }
+
+    func testDiscardingQueuedDeletionsTouchesNothingRemotely() async throws {
+        let calendar = googleCalendar()
+        let events = remoteEvents(CalendarSyncCoordinator.massDeletionThreshold + 1, calendarID: calendar.id)
+        let (viewModel, provider) = makeStack(events: events, calendars: [calendar])
+        for event in events { viewModel.deleteEvent(event) }
+        await viewModel.syncAllProviders()
+        XCTAssertNotNil(viewModel.pendingMassDeletion)
+
+        viewModel.sync.discardQueuedDeletions(for: .google)
+        await viewModel.syncAllProviders()
+
+        XCTAssertTrue(provider.pushedDeletes.isEmpty)
+        XCTAssertTrue(viewModel.pendingDeletions.isEmpty)
+        XCTAssertNil(viewModel.pendingMassDeletion)
+    }
+
+    func testFewDeletionsStillGoThroughWithoutConfirmation() async throws {
+        let calendar = googleCalendar()
+        let events = remoteEvents(3, calendarID: calendar.id)
+        let (viewModel, provider) = makeStack(events: events, calendars: [calendar])
+        for event in events { viewModel.deleteEvent(event) }
+
+        await viewModel.syncAllProviders()
+
+        XCTAssertEqual(provider.pushedDeletes.count, 3)
+        XCTAssertNil(viewModel.pendingMassDeletion)
+    }
+
+    func testReadOnlyEventCannotBeEditedOrDeleted() throws {
+        let calendar = googleCalendar()
+        var event = remoteEvents(1, calendarID: calendar.id)[0]
+        event.isReadOnly = true
+        let (viewModel, _) = makeStack(events: [event], calendars: [calendar])
+
+        XCTAssertFalse(viewModel.canEdit(event))
+        var moved = event
+        moved.startDate = event.startDate.addingTimeInterval(900)
+        viewModel.updateEvent(moved)
+        XCTAssertEqual(viewModel.events.first?.startDate, event.startDate)
+
+        viewModel.deleteEvent(event)
+        XCTAssertEqual(viewModel.events.count, 1)
+        XCTAssertTrue(viewModel.pendingDeletions.isEmpty)
+    }
+
+    func testRecurringOccurrencesGetDistinctReadOnlyIDs() {
+        let id = AppleCalendarProvider.occurrenceID("ABC", occurrenceDate: Date(timeIntervalSince1970: 1_700_000_000))
+        XCTAssertTrue(AppleCalendarProvider.isOccurrenceID(id))
+        XCTAssertFalse(AppleCalendarProvider.isOccurrenceID("ABC"))
+        XCTAssertNotEqual(id, AppleCalendarProvider.occurrenceID("ABC", occurrenceDate: Date(timeIntervalSince1970: 1_700_086_400)))
+    }
+
+    func testReadOnlyFlagSurvivesMergeAndOldFilesDecode() throws {
+        let calendar = googleCalendar()
+        var remote = ParsedRemoteEvent(
+            remoteRef: RemoteEventRef(providerID: .google, remoteCalendarID: "primary", remoteEventID: "occ"),
+            title: "Повтор", start: Date(), end: Date().addingTimeInterval(3600),
+            isAllDay: false, notes: "", location: "", updatedAt: Date(), etag: nil
+        )
+        remote.isReadOnly = true
+        let batch = SyncBatch(upserts: [remote], deletes: [], nextPageToken: nil, nextSyncToken: nil, kind: .incremental)
+
+        let merged = CalendarSyncMerger.merge(batch, into: [], localCalendar: calendar, dateRange: nil)
+        XCTAssertEqual(merged.first?.isReadOnly, true)
+
+        // Файл прежней версии без ключа isReadOnly читается как редактируемый.
+        let json = """
+        {"id":"\(UUID().uuidString)","title":"Старое","startDate":"2026-09-18T14:30:00Z","endDate":"2026-09-18T16:15:00Z","isAllDay":false,"notes":"","location":"","calendarId":"\(calendar.id.uuidString)","localUpdatedAt":"2026-09-16T00:00:00Z","syncState":"clean"}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(CalendarEvent.self, from: json.data(using: .utf8)!)
+        XCTAssertFalse(decoded.isReadOnly)
+    }
+}

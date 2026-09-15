@@ -11,6 +11,12 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
     @Published var isEnabled: Bool {
         didSet { UserDefaults.standard.set(isEnabled, forKey: Keys.isEnabled) }
     }
+    /// Разрешить приложению менять и удалять события в системных календарях.
+    /// Выключено — календари Apple только читаются, ни одна правка из
+    /// приложения в них не уходит.
+    @Published var allowsWriteBack: Bool {
+        didSet { UserDefaults.standard.set(allowsWriteBack, forKey: Keys.allowsWriteBack) }
+    }
 
     private let eventStore: EKEventStore
 
@@ -18,6 +24,7 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
         self.eventStore = eventStore
         let hasFullAccess = Self.hasFullAccess
         self.isEnabled = hasFullAccess && UserDefaults.standard.bool(forKey: Keys.isEnabled)
+        self.allowsWriteBack = UserDefaults.standard.object(forKey: Keys.allowsWriteBack) as? Bool ?? true
         self.status = hasFullAccess
             ? .signedIn(accountLabel: "Системные календари")
             : .signedOut
@@ -49,7 +56,7 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
                 providerID: id,
                 title: calendar.title,
                 colorHex: Self.hexString(from: calendar.cgColor),
-                isWritable: calendar.allowsContentModifications
+                isWritable: calendar.allowsContentModifications && allowsWriteBack
             )
         }
     }
@@ -78,11 +85,19 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
                       let eventEnd = event.endDate
                 else { return nil }
                 let localEnd = event.isAllDay ? eventEnd.addingTimeInterval(-1) : eventEnd
+                // У всех экземпляров повторяющегося события один eventIdentifier.
+                // Даём каждому свой ключ, чтобы показать их все, и помечаем
+                // только для чтения: правка «этого экземпляра» через EventKit
+                // по одному идентификатору попала бы в другой экземпляр.
+                let isOccurrence = event.hasRecurrenceRules || event.isDetached
+                let remoteEventID = isOccurrence
+                    ? Self.occurrenceID(eventID, occurrenceDate: event.occurrenceDate ?? eventStart)
+                    : eventID
                 return ParsedRemoteEvent(
                     remoteRef: RemoteEventRef(
                         providerID: providerID,
                         remoteCalendarID: remoteCalendarID,
-                        remoteEventID: eventID
+                        remoteEventID: remoteEventID
                     ),
                     title: event.title ?? "Без названия",
                     start: eventStart,
@@ -91,7 +106,8 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
                     notes: event.notes ?? "",
                     location: event.location ?? "",
                     updatedAt: event.lastModifiedDate ?? .distantPast,
-                    etag: nil
+                    etag: nil,
+                    isReadOnly: isOccurrence
                 )
             }
         }.value
@@ -108,11 +124,17 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
 
     func pushUpsert(localEvent: CalendarEvent, to remoteCalendar: RemoteCalendar) async throws -> PushedRemoteEvent {
         try ensureAuthorized()
+        guard allowsWriteBack else {
+            throw ProviderError.notImplemented(provider: id, operation: "запись (выключена в настройках)")
+        }
         guard let calendar = eventStore.calendar(withIdentifier: remoteCalendar.id) else {
             throw ProviderError.remoteCalendarNotFound(remoteID: remoteCalendar.id)
         }
         guard calendar.allowsContentModifications else {
             throw ProviderError.notImplemented(provider: id, operation: "запись в календарь \(calendar.title)")
+        }
+        if let externalID = localEvent.externalId, Self.isOccurrenceID(externalID) {
+            throw ProviderError.notImplemented(provider: id, operation: "изменение экземпляра повторяющегося события")
         }
 
         let event: EKEvent
@@ -150,10 +172,40 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
         )
     }
 
+    /// Удаляет ровно одно событие и только если оно всё ещё лежит в том
+    /// календаре, из которого его удалили локально. Повторяющиеся события
+    /// из приложения не удаляются вовсе (см. `occurrenceID`).
     func pushDelete(_ ref: RemoteEventRef, etag: String?) async throws {
         try ensureAuthorized()
+        guard allowsWriteBack else {
+            throw ProviderError.notImplemented(provider: id, operation: "удаление (запись выключена в настройках)")
+        }
+        guard !Self.isOccurrenceID(ref.remoteEventID) else {
+            throw ProviderError.notImplemented(provider: id, operation: "удаление экземпляра повторяющегося события")
+        }
         guard let event = eventStore.event(withIdentifier: ref.remoteEventID) else { return }
+        guard !event.hasRecurrenceRules else {
+            throw ProviderError.notImplemented(provider: id, operation: "удаление повторяющегося события")
+        }
+        guard event.calendar?.calendarIdentifier == ref.remoteCalendarID else {
+            // Событие переехало в другой календарь на стороне Apple: локальное
+            // удаление опиралось на устаревшие данные — не трогаем, следующий
+            // pull покажет его заново.
+            return
+        }
         try eventStore.remove(event, span: .thisEvent, commit: true)
+    }
+
+    // MARK: - Идентификаторы экземпляров
+
+    nonisolated private static let occurrenceSeparator = "@occ:"
+
+    nonisolated static func occurrenceID(_ eventIdentifier: String, occurrenceDate: Date) -> String {
+        "\(eventIdentifier)\(occurrenceSeparator)\(Int(occurrenceDate.timeIntervalSince1970))"
+    }
+
+    nonisolated static func isOccurrenceID(_ remoteEventID: String) -> Bool {
+        remoteEventID.contains(occurrenceSeparator)
     }
 
     private func ensureAuthorized() throws {
@@ -185,5 +237,6 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
 
     private enum Keys {
         static let isEnabled = "appleCalendar.isEnabled"
+        static let allowsWriteBack = "appleCalendar.allowsWriteBack"
     }
 }

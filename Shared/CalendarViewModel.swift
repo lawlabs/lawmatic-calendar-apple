@@ -81,6 +81,7 @@ final class CalendarViewModel {
 
     var isSyncing: Bool { sync.isSyncing }
     var syncProgressText: String? { sync.progressText }
+    var pendingMassDeletion: CalendarSyncCoordinator.MassDeletionRequest? { sync.pendingMassDeletion }
     var syncingProviderIDs: Set<ProviderID> { sync.syncingProviderIDs }
     var lastSuccessfulSyncDate: Date? { sync.lastSuccessfulSyncDate }
 
@@ -170,7 +171,7 @@ final class CalendarViewModel {
     // MARK: - CRUD событий
 
     func canEdit(_ event: CalendarEvent) -> Bool {
-        calendar(for: event)?.isWritable ?? true
+        !event.isReadOnly && (calendar(for: event)?.isWritable ?? true)
     }
 
     func addEvent(_ event: CalendarEvent) {

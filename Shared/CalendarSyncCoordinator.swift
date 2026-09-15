@@ -22,6 +22,19 @@ final class CalendarSyncCoordinator {
     /// Что сейчас делает синхронизация — для индикатора в тулбаре и сайдбаре.
     private(set) var progressText: String?
     var syncError: IdentifiableMessage?
+
+    struct MassDeletionRequest: Equatable {
+        let providerID: ProviderID
+        let count: Int
+    }
+
+    /// Больше стольких удалений за один прогон одного провайдера не уходит на
+    /// сервер без явного подтверждения: это либо осознанное массовое действие,
+    /// либо ошибка — и во втором случае цена слишком высока.
+    static let massDeletionThreshold = 20
+    /// Очередь удалений, которая ждёт подтверждения пользователя.
+    private(set) var pendingMassDeletion: MassDeletionRequest?
+    @ObservationIgnored private var confirmedMassDeletionProviders: Set<ProviderID> = []
     /// Время последней полностью успешной синхронизации всех включённых аккаунтов.
     private(set) var lastSuccessfulSyncDate: Date?
 
@@ -41,6 +54,21 @@ final class CalendarSyncCoordinator {
     var isSyncing: Bool { !syncingProviderIDs.isEmpty }
 
     // MARK: - Публичные входы
+
+    /// Пользователь подтвердил массовое удаление: следующий прогон отправит очередь.
+    func confirmMassDeletion(for providerID: ProviderID) {
+        confirmedMassDeletionProviders.insert(providerID)
+        pendingMassDeletion = nil
+    }
+
+    /// Отменить накопленные удаления: tombstones снимаются, на сервере ничего не
+    /// трогается, а локальные копии вернёт следующее чтение ленты.
+    func discardQueuedDeletions(for providerID: ProviderID) {
+        repository.pendingDeletions.removeAll { $0.remoteRef.providerID == providerID }
+        repository.save(.pendingDeletions)
+        pendingMassDeletion = nil
+        confirmedMassDeletionProviders.remove(providerID)
+    }
 
     func syncAllProviders() async {
         syncError = nil
@@ -341,6 +369,12 @@ final class CalendarSyncCoordinator {
 
     private func flushPendingDeletions(for provider: any CalendarProvider) async throws {
         let queued = repository.pendingDeletions.filter { $0.remoteRef.providerID == provider.id }
+        if queued.count > Self.massDeletionThreshold, !confirmedMassDeletionProviders.contains(provider.id) {
+            pendingMassDeletion = MassDeletionRequest(providerID: provider.id, count: queued.count)
+            throw ProviderError.massDeletionBlocked(provider: provider.id, count: queued.count)
+        }
+        defer { confirmedMassDeletionProviders.remove(provider.id) }
+        if pendingMassDeletion?.providerID == provider.id { pendingMassDeletion = nil }
         for deletion in queued {
             try await provider.pushDelete(deletion.remoteRef, etag: deletion.etag)
             repository.pendingDeletions.removeAll { $0.id == deletion.id }

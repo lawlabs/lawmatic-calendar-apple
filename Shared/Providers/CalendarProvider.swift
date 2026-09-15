@@ -98,6 +98,8 @@ struct ParsedRemoteEvent: Sendable {
     let location: String
     let updatedAt: Date
     let etag: String?
+    /// Запись нельзя менять из приложения, даже если календарь writable.
+    var isReadOnly: Bool = false
 }
 
 struct DeletedRemoteEvent: Sendable {

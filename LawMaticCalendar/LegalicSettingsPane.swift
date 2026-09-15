@@ -12,8 +12,17 @@ struct LegalicSettingsPane: View {
             Section("LEGALIC") {
                 Toggle("Синхронизировать задачи и сроки", isOn: $provider.isEnabled)
                     .disabled(!isSignedIn)
-                Text("Задачи и сроки по делам читаются лентой /sync/v1 по учётной записи LEGALIC. Первый обмен читает всю ленту, дальше — только изменения. В календарь попадают записи не старше \(LegalicProvider.historyHorizonYears) г.")
+                Text("Задачи и сроки по делам читаются лентой /sync/v1 по учётной записи LEGALIC. Первый обмен читает всю ленту, дальше — только изменения.")
                     .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Показывать задачи за", selection: $provider.historyHorizonMonths) {
+                    ForEach(LegalicProvider.historyHorizonOptions, id: \.self) { months in
+                        Text(LegalicProvider.historyHorizonTitle(months: months)).tag(months)
+                    }
+                }
+                .disabled(!isSignedIn)
+                Text("Лента LEGALIC не фильтруется по датам: читается вся, а в календарь попадают только задачи и сроки не старше выбранного периода. Смена периода перечитывает ленту.")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                 HStack {
                     Text(provider.requiresFullResync

@@ -278,7 +278,9 @@ final class EventRepository {
         do {
             let loadedCalendars = try store.loadCalendars()
             calendars = loadedCalendars.isEmpty ? CalendarSeedData.defaultCalendars() : loadedCalendars
-            events = try store.loadEvents()
+            // Записи с бессмысленными датами (наследие «нулевых» дат из внешних
+            // импортов) в календаре не нужны; синхронизация вернёт их правильно.
+            events = try store.loadEvents().filter(\.hasPlausibleDates)
             pendingDeletions = try store.loadPendingDeletions()
 
             if loadedCalendars.isEmpty {

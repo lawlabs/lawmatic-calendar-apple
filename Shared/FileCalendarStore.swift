@@ -3,6 +3,8 @@ import Foundation
 enum FileCalendarStoreError: LocalizedError {
     case appSupportUnavailable
     case failedToCreateDirectory
+    /// Файл не прочитался; копия сохранена рядом, чтобы данные не пропали.
+    case unreadable(file: String, backup: String, underlying: String)
 
     var errorDescription: String? {
         switch self {
@@ -10,6 +12,8 @@ enum FileCalendarStoreError: LocalizedError {
             return "Не удалось получить папку Application Support."
         case .failedToCreateDirectory:
             return "Не удалось создать папку для хранения данных календаря."
+        case .unreadable(let file, let backup, let underlying):
+            return "Файл \(file) не прочитался (\(underlying)). Его копия сохранена как \(backup); приложение продолжит с пустым списком."
         }
     }
 }
@@ -33,19 +37,22 @@ final class FileCalendarStore: CalendarStore {
     private var directoryError: Error?
     private var writeErrorHandler: (@MainActor (Error) -> Void)?
 
-    init(fileManager: FileManager = .default) {
+    /// - Parameter baseURL: папка с файлами; по умолчанию — Application Support.
+    init(fileManager: FileManager = .default, baseURL: URL? = nil) {
         self.fileManager = fileManager
         self.decoder = JSONDecoder()
-        self.decoder.dateDecodingStrategy = .iso8601
+        self.decoder.dateDecodingStrategy = .custom { try Self.decodeDateTolerantly($0) }
 
-        if let applicationSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+        if let baseURL {
+            self.baseURL = baseURL
+        } else if let applicationSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             self.baseURL = applicationSupportURL.appendingPathComponent("LawMaticCalendar", isDirectory: true)
         } else {
             self.baseURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("LawMaticCalendar", isDirectory: true)
         }
 
         do {
-            try fileManager.createDirectory(at: baseURL, withIntermediateDirectories: true, attributes: nil)
+            try fileManager.createDirectory(at: self.baseURL, withIntermediateDirectories: true, attributes: nil)
         } catch {
             directoryError = FileCalendarStoreError.failedToCreateDirectory
         }
@@ -111,7 +118,48 @@ final class FileCalendarStore: CalendarStore {
         }
 
         let data = try Data(contentsOf: url)
-        return try decoder.decode([T].self, from: data)
+        do {
+            return try decoder.decode([T].self, from: data)
+        } catch {
+            // Нечитаемый файл нельзя молча заменить пустым состоянием — следующая
+            // запись затёрла бы данные. Откладываем копию и только потом сдаёмся.
+            let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+            let backupURL = url.deletingPathExtension().appendingPathExtension("broken-\(stamp).json")
+            try? fileManager.copyItem(at: url, to: backupURL)
+            throw FileCalendarStoreError.unreadable(
+                file: url.lastPathComponent,
+                backup: backupURL.lastPathComponent,
+                underlying: error.localizedDescription
+            )
+        }
+    }
+
+    /// Даты пишутся как ISO 8601. При чтении терпим то, что сам `ISO8601DateFormatter`
+    /// не разбирает (например, отрицательный год из старых импортов): одна кривая
+    /// дата не должна делать нечитаемым файл с десятками тысяч событий.
+    private static let isoDecoder: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let isoFractionalDecoder: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static func decodeDateTolerantly(_ decoder: Decoder) throws -> Date {
+        let container = try decoder.singleValueContainer()
+        if let seconds = try? container.decode(Double.self) {
+            return Date(timeIntervalSinceReferenceDate: seconds)
+        }
+        let string = try container.decode(String.self)
+        if let date = isoDecoder.date(from: string) ?? isoFractionalDecoder.date(from: string) {
+            return date
+        }
+        // Год вне диапазона формата — считаем дату отсутствующей (начало отсчёта).
+        return .distantPast
     }
 
     private func enqueueWrite<T: Encodable & Sendable>(_ value: T, to url: URL) throws {

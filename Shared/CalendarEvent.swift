@@ -55,6 +55,15 @@ struct CalendarEvent: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+extension CalendarEvent {
+    /// Даты в разумных пределах (1970…2200). Всё остальное — не дата, а
+    /// отсутствие даты, закодированное как `0000-00-00` или `distantPast`.
+    var hasPlausibleDates: Bool {
+        let range = LegalicTaskMapper.plausibleDateRange
+        return range.contains(startDate) && range.contains(endDate)
+    }
+}
+
 enum EventSyncState: String, Codable, Sendable {
     case clean
     case pendingUpload

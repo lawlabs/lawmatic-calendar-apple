@@ -18,10 +18,19 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
 
     static let defaultServer = "legalic.ru"
 
-    /// Как далеко в прошлое брать задачи и сроки. Лента отдаёт всё без фильтра
-    /// по датам, поэтому отсекаем на клиенте; правило применяется и к
-    /// инкрементам, так что старая задача, поднявшая `usn`, в календарь не вернётся.
-    static let historyHorizonYears = 1
+    /// Варианты горизонта истории в месяцах; `0` — без ограничения.
+    static let historyHorizonOptions: [Int] = [3, 12, 36, 0]
+    static let defaultHistoryHorizonMonths = 12
+
+    static func historyHorizonTitle(months: Int) -> String {
+        switch months {
+        case 0: return "всё"
+        case 3: return "3 месяца"
+        case 12: return "год"
+        case 36: return "3 года"
+        default: return "\(months) мес."
+        }
+    }
 
     /// Версия правил отбора. Смена значения заставляет перечитать ленты с
     /// начала, чтобы локальный набор соответствовал новым правилам.
@@ -52,6 +61,17 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
     @Published private(set) var requiresFullResync: Bool {
         didSet { UserDefaults.standard.set(requiresFullResync, forKey: Keys.requiresFullResync) }
     }
+    /// Как далеко в прошлое брать задачи и сроки, в месяцах (`0` — без ограничения).
+    /// Лента отдаёт всё без фильтра по датам, поэтому отсекаем на клиенте; правило
+    /// применяется и к инкрементам, так что старая задача, поднявшая `usn`, в
+    /// календарь не вернётся. Смена горизонта требует перечитать ленту.
+    @Published var historyHorizonMonths: Int {
+        didSet {
+            guard historyHorizonMonths != oldValue else { return }
+            UserDefaults.standard.set(historyHorizonMonths, forKey: Keys.historyHorizonMonths)
+            requiresFullResync = true
+        }
+    }
 
     private let apiClient: LegalicAPIClient
 
@@ -65,6 +85,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
         self.allowsWriteBack = defaults.bool(forKey: Keys.allowsWriteBack)
         self.isEnabled = defaults.bool(forKey: Keys.isEnabled)
         self.requiresFullResync = defaults.bool(forKey: Keys.requiresFullResync)
+        self.historyHorizonMonths = defaults.object(forKey: Keys.historyHorizonMonths) as? Int ?? Self.defaultHistoryHorizonMonths
 
         Self.removeLegacyCredentials()
         if defaults.integer(forKey: Keys.feedRulesVersion) != Self.feedRulesVersion {
@@ -106,9 +127,12 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
     }
 
     /// Начало окна истории: задачи и сроки, закончившиеся раньше, не импортируются.
-    var historyHorizon: Date {
-        Calendar.current.date(byAdding: .year, value: -Self.historyHorizonYears, to: Calendar.current.startOfDay(for: Date()))
-            ?? Date().addingTimeInterval(-365 * 86_400)
+    /// `nil` — без ограничения.
+    var historyHorizon: Date? {
+        guard historyHorizonMonths > 0 else { return nil }
+        let today = Calendar.current.startOfDay(for: Date())
+        return Calendar.current.date(byAdding: .month, value: -historyHorizonMonths, to: today)
+            ?? today.addingTimeInterval(-Double(historyHorizonMonths) * 30 * 86_400)
     }
 
     /// Перечитать ленты с начала при следующей синхронизации.
@@ -338,6 +362,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
         static let accountName = "legalic.accountName"
         static let requiresFullResync = "legalic.requiresFullResync"
         static let feedRulesVersion = "legalic.feedRulesVersion"
+        static let historyHorizonMonths = "legalic.historyHorizonMonths"
         static let legacyCleaned = "legalic.legacyCredentialsCleaned.v2"
     }
 }

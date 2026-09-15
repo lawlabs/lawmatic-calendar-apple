@@ -251,25 +251,39 @@ enum LegalicTaskMapper {
         dateTimeFormatter.string(from: date)
     }
 
+    /// Разумные границы дат. В рабочей базе встречаются «нулевые» даты MySQL
+    /// (`0000-00-00 00:00:00` → год −1) и Delphi (`1899-12-30`): это отсутствие
+    /// даты, а не дата. Пропустить их дальше нельзя — `JSONDecoder` не читает
+    /// отрицательный год, и один такой файл ронял загрузку всей базы.
+    static let plausibleDateRange: ClosedRange<Date> = {
+        let calendar = Calendar(identifier: .gregorian)
+        let lower = calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: 1970, month: 1, day: 1))!
+        let upper = calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: 2200, month: 1, day: 1))!
+        return lower ... upper
+    }()
+
     static func dateValue(_ any: Any?) -> Date? {
+        let parsed: Date?
         switch any {
         case let string as String:
             let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            if let date = dateTimeFormatter.date(from: trimmed) { return date }
-            if let date = dateOnlyFormatter.date(from: trimmed) { return date }
-            if let date = iso8601Fractional.date(from: trimmed) ?? iso8601Plain.date(from: trimmed) { return date }
-            if let number = Double(trimmed) { return unixDate(number) }
-            return nil
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("0000-"), !trimmed.hasPrefix("-") else { return nil }
+            parsed = dateTimeFormatter.date(from: trimmed)
+                ?? dateOnlyFormatter.date(from: trimmed)
+                ?? iso8601Fractional.date(from: trimmed)
+                ?? iso8601Plain.date(from: trimmed)
+                ?? Double(trimmed).flatMap(unixDate)
         case let number as NSNumber:
-            return unixDate(number.doubleValue)
+            parsed = unixDate(number.doubleValue)
         case let int as Int:
-            return unixDate(Double(int))
+            parsed = unixDate(Double(int))
         case let double as Double:
-            return unixDate(double)
+            parsed = unixDate(double)
         default:
-            return nil
+            parsed = nil
         }
+        guard let parsed, plausibleDateRange.contains(parsed) else { return nil }
+        return parsed
     }
 
     private static func unixDate(_ value: Double) -> Date? {

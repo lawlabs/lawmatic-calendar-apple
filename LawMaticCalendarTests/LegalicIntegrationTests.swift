@@ -401,3 +401,75 @@ final class LegalicAPIClientTests: XCTestCase {
         XCTAssertEqual(result.item?.caption, "Серверная версия")
     }
 }
+
+// MARK: - Кривые даты не должны ломать базу
+
+final class LegalicDateSanityTests: XCTestCase {
+    func testZeroAndNegativeDatesAreRejected() {
+        XCTAssertNil(LegalicTaskMapper.dateValue("0000-00-00 00:00:00"))
+        XCTAssertNil(LegalicTaskMapper.dateValue("-0001-11-30 00:00:00"))
+        XCTAssertNil(LegalicTaskMapper.dateValue("1899-12-30 00:00:00"), "Нулевая дата Delphi")
+        XCTAssertNil(LegalicTaskMapper.dateValue(0))
+        XCTAssertNotNil(LegalicTaskMapper.dateValue("2026-09-17 10:20:00"))
+        XCTAssertNotNil(LegalicTaskMapper.dateValue(1_757_900_000))
+    }
+
+    func testTaskWithZeroDatesIsNotACalendarEvent() throws {
+        let record = try XCTUnwrap(LegalicTaskMapper.taskRecord(from: [
+            "guid": "z", "usn": 1, "caption": "Старое",
+            "start": "0000-00-00 00:00:00", "finish": "0000-00-00 00:00:00",
+        ]))
+        XCTAssertNil(LegalicTaskMapper.remoteEvent(from: record, providerID: .legalic, remoteCalendarID: "t"))
+    }
+
+    func testHorizonDropsOldTasksButKeepsRecentOnes() throws {
+        let horizon = Calendar.current.date(byAdding: .year, value: -1, to: Date())!
+        let old = try XCTUnwrap(LegalicTaskMapper.taskRecord(from: [
+            "guid": "old", "usn": 1, "caption": "Давно", "start": "2019-03-01 10:00:00", "finish": "2019-03-01 11:00:00",
+        ]))
+        let recent = try XCTUnwrap(LegalicTaskMapper.taskRecord(from: [
+            "guid": "new", "usn": 2, "caption": "Скоро", "start": "2026-10-01 10:00:00", "finish": "2026-10-01 11:00:00",
+        ]))
+
+        XCTAssertNil(LegalicTaskMapper.remoteEvent(from: old, providerID: .legalic, remoteCalendarID: "t", horizon: horizon))
+        XCTAssertNotNil(LegalicTaskMapper.remoteEvent(from: recent, providerID: .legalic, remoteCalendarID: "t", horizon: horizon))
+        XCTAssertNotNil(LegalicTaskMapper.remoteEvent(from: old, providerID: .legalic, remoteCalendarID: "t", horizon: nil), "Без горизонта берём всё")
+    }
+
+    func testEventWithNegativeYearDoesNotBreakStoreLoading() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lawmatic-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let calendarID = UUID()
+        let json = """
+        [
+          {"id":"\(UUID().uuidString)","title":"Нормальное","startDate":"2026-09-18T14:30:00Z","endDate":"2026-09-18T16:15:00Z","isAllDay":false,"notes":"","location":"","calendarId":"\(calendarID.uuidString)","localUpdatedAt":"2026-09-16T00:00:00Z","syncState":"clean"},
+          {"id":"\(UUID().uuidString)","title":"Кривое","startDate":"-0001-11-29T21:29:43Z","endDate":"-0001-11-29T21:29:43Z","isAllDay":false,"notes":"","location":"","calendarId":"\(calendarID.uuidString)","localUpdatedAt":"2026-09-16T00:00:00Z","syncState":"clean"}
+        ]
+        """
+        try json.data(using: .utf8)!.write(to: directory.appendingPathComponent("events.json"))
+
+        let store = FileCalendarStore(fileManager: .default, baseURL: directory)
+        let events = try store.loadEvents()
+
+        XCTAssertEqual(events.count, 2, "Файл читается целиком, кривая дата не роняет загрузку")
+        XCTAssertEqual(events.filter(\.hasPlausibleDates).map(\.title), ["Нормальное"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("events.broken").path))
+    }
+
+    func testUnreadableFileIsBackedUpBeforeFailing() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lawmatic-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "not json at all".data(using: .utf8)!.write(to: directory.appendingPathComponent("events.json"))
+
+        let store = FileCalendarStore(fileManager: .default, baseURL: directory)
+
+        XCTAssertThrowsError(try store.loadEvents()) { error in
+            guard case FileCalendarStoreError.unreadable(let file, let backup, _) = error else {
+                return XCTFail("неожиданная ошибка: \(error)")
+            }
+            XCTAssertEqual(file, "events.json")
+            XCTAssertTrue(backup.hasPrefix("events.broken-"))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent(backup).path))
+        }
+    }
+}

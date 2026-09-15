@@ -20,7 +20,7 @@ extension CalendarProvider {
     func proposedRemoteEventID(for localEvent: CalendarEvent) -> String? { nil }
 }
 
-struct RemoteCalendar: Identifiable, Hashable {
+struct RemoteCalendar: Identifiable, Hashable, Sendable {
     let id: String
     let providerID: ProviderID
     let title: String
@@ -28,32 +28,32 @@ struct RemoteCalendar: Identifiable, Hashable {
     let isWritable: Bool
 }
 
-struct RemoteEventRef: Hashable, Codable {
+struct RemoteEventRef: Hashable, Codable, Sendable {
     let providerID: ProviderID
     let remoteCalendarID: String
     let remoteEventID: String
 }
 
-struct PushedRemoteEvent {
+struct PushedRemoteEvent: Sendable {
     let remoteRef: RemoteEventRef
     let etag: String?
     let updatedAt: Date
 }
 
-struct SyncRequest {
+struct SyncRequest: Sendable {
     let dateRange: ClosedRange<Date>?
     let pageToken: String?
     let syncToken: String?
 }
 
-enum SyncBatchKind {
+enum SyncBatchKind: Sendable {
     /// Батч является полной выборкой для `SyncRequest.dateRange`.
     case fullSnapshot
     /// Батч содержит только изменения после переданного sync token.
     case incremental
 }
 
-struct SyncBatch {
+struct SyncBatch: Sendable {
     let upserts: [ParsedRemoteEvent]
     let deletes: [DeletedRemoteEvent]
     let nextPageToken: String?
@@ -80,7 +80,7 @@ struct SyncBatch {
     }
 }
 
-struct ParsedRemoteEvent {
+struct ParsedRemoteEvent: Sendable {
     let remoteRef: RemoteEventRef
     let title: String
     let start: Date
@@ -92,7 +92,7 @@ struct ParsedRemoteEvent {
     let etag: String?
 }
 
-struct DeletedRemoteEvent {
+struct DeletedRemoteEvent: Sendable {
     let remoteRef: RemoteEventRef
     let updatedAt: Date
 }

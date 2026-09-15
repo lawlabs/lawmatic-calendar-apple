@@ -71,3 +71,20 @@ extension View {
     }
 }
 #endif
+
+// MARK: - Цвета блоков событий
+
+extension Color {
+    /// Цвет текста поверх заливки цветом календаря.
+    ///
+    /// Невыделенный блок залит полупрозрачным цветом (≈25 %), поэтому в тёмной
+    /// теме подложка тёмная и текст нужен светлый; в светлой — наоборот.
+    /// Выделенный блок залит почти непрозрачным пастельным цветом, и на нём
+    /// тёмный текст читается в обеих темах.
+    func eventTextColor(isSelected: Bool, colorScheme: ColorScheme) -> Color {
+        if isSelected || colorScheme == .light {
+            return mix(with: .black, by: 0.5)
+        }
+        return mix(with: .white, by: 0.55)
+    }
+}

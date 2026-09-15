@@ -1,5 +1,35 @@
 import Foundation
 
+extension Calendar {
+    enum WeekdaySymbolStyle {
+        /// «Пн», «Вт», …
+        case short
+        /// «П», «В», …
+        case veryShort
+    }
+
+    /// Подписи дней недели в порядке колонок календарной сетки, т.е. начиная
+    /// с `firstWeekday` текущей локали (в ru_RU — с понедельника).
+    /// `getAllWeeksInMonth()` строит сетку от того же `firstWeekday`, поэтому
+    /// подписи и колонки всегда совпадают.
+    func orderedWeekdaySymbols(_ style: WeekdaySymbolStyle) -> [String] {
+        // Интерфейс приложения русскоязычный, названия дней — тоже; а первый
+        // день недели и часовой пояс берём из настроек региона пользователя.
+        var localized = self
+        localized.locale = Locale(identifier: "ru_RU")
+        let symbols: [String]
+        switch style {
+        case .short:
+            symbols = localized.shortStandaloneWeekdaySymbols
+        case .veryShort:
+            symbols = localized.veryShortStandaloneWeekdaySymbols
+        }
+        guard symbols.count == 7 else { return symbols }
+        let firstIndex = max(0, min(6, firstWeekday - 1))
+        return Array(symbols[firstIndex...] + symbols[..<firstIndex])
+    }
+}
+
 extension Date {
     func startOfMonth() -> Date {
         let calendar = Calendar.current

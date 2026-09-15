@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CalendarSidebarView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
 
     var body: some View {
         List {
@@ -45,58 +45,89 @@ struct CalendarSidebarView: View {
             }
 
             Section("Ближайшие события") {
-                let upcomingEvents = viewModel.events
-                    .filter { $0.startDate >= Date() }
-                    .sorted { $0.startDate < $1.startDate }
-                    .prefix(5)
-
-                if upcomingEvents.isEmpty {
-                    Text("Нет предстоящих событий")
-                        .foregroundColor(.gray)
-                        .font(.caption)
-                } else {
-                    ForEach(upcomingEvents) { event in
-                        Button {
-                            viewModel.selectedDate = event.startDate
-                            viewModel.viewMode = .day
-                            viewModel.selectEvent(event)
-                        } label: {
-                            HStack {
-                                Circle()
-                                    .fill(viewModel.color(for: event))
-                                    .frame(width: 8, height: 8)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(event.title)
-                                        .font(.caption)
-                                        .lineLimit(1)
-
-                                    Text(event.startDate.dayString())
-                                        .font(.caption2)
-                                        .foregroundColor(.gray)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                UpcomingEventsSection(viewModel: viewModel)
             }
 
             Section {
-                MiniCalendarView(viewModel: viewModel)
+                MiniCalendarView(
+                    selectedDate: viewModel.selectedDate,
+                    onSelect: { viewModel.selectedDate = $0 }
+                )
             }
         }
         .listStyle(.sidebar)
     }
 }
 
-struct MiniCalendarView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+/// Пять ближайших событий. Вынесено отдельно, чтобы список пересчитывался
+/// только при изменении событий, а не при каждом действии в сайдбаре.
+private struct UpcomingEventsSection: View {
+    var viewModel: CalendarViewModel
 
-    private let weekDays = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"]
+    var body: some View {
+        let upcomingEvents = viewModel.upcomingEvents(limit: 5)
+
+        if upcomingEvents.isEmpty {
+            Text("Нет предстоящих событий")
+                .foregroundColor(.gray)
+                .font(.caption)
+        } else {
+            ForEach(upcomingEvents) { event in
+                Button {
+                    viewModel.selectedDate = event.startDate
+                    viewModel.viewMode = .day
+                    viewModel.selectEvent(event)
+                } label: {
+                    HStack {
+                        Circle()
+                            .fill(viewModel.color(for: event))
+                            .frame(width: 8, height: 8)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(event.title.isEmpty ? "Новое событие" : event.title)
+                                .font(.caption)
+                                .foregroundColor(event.title.isEmpty ? .secondary : .primary)
+                                .lineLimit(1)
+
+                            Text(upcomingSubtitle(for: event))
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(event.title), \(upcomingSubtitle(for: event))")
+            }
+        }
+    }
+
+    private func upcomingSubtitle(for event: CalendarEvent) -> String {
+        if event.isAllDay {
+            return "\(event.startDate.dayString()), весь день"
+        }
+        return "\(event.startDate.dayString()), \(event.startDate.timeString())"
+    }
+}
+
+/// Компактный месячный календарь для навигации.
+///
+/// Показываемый месяц следует за `selectedDate` (переход стрелками в тулбаре
+/// или из другого вида перелистывает и его), но пользователь может листать
+/// месяцы и независимо — до следующего изменения выбранной даты.
+struct MiniCalendarView: View {
+    let selectedDate: Date
+    let onSelect: (Date) -> Void
+
+    private let weekDays = Calendar.current.orderedWeekdaySymbols(.short)
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
 
-    @State private var displayMonth = Date()
+    @State private var displayMonth: Date
+
+    init(selectedDate: Date, onSelect: @escaping (Date) -> Void) {
+        self.selectedDate = selectedDate
+        self.onSelect = onSelect
+        _displayMonth = State(initialValue: selectedDate.startOfMonth())
+    }
 
     private var weeks: [[Date]] {
         displayMonth.getAllWeeksInMonth()
@@ -112,6 +143,7 @@ struct MiniCalendarView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Предыдущий месяц")
 
                 Spacer()
 
@@ -128,10 +160,11 @@ struct MiniCalendarView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Следующий месяц")
             }
 
             LazyVGrid(columns: columns, spacing: 4) {
-                ForEach(weekDays, id: \.self) { day in
+                ForEach(Array(weekDays.enumerated()), id: \.offset) { _, day in
                     Text(day)
                         .font(.system(size: 9))
                         .foregroundColor(.gray)
@@ -144,29 +177,47 @@ struct MiniCalendarView: View {
                         Text("")
                             .frame(width: 20, height: 20)
                     } else {
-                        Button {
-                            viewModel.selectedDate = date
-                        } label: {
-                            Text(date.shortDayString())
-                                .font(.system(size: 10))
-                                .foregroundColor(
-                                    Calendar.current.isDateInToday(date) ? .white :
-                                    Calendar.current.isDate(date, equalTo: displayMonth, toGranularity: .month) ? .primary : .gray
-                                )
-                                .frame(width: 20, height: 20)
-                                .background(
-                                    Circle()
-                                        .fill(
-                                            Calendar.current.isDateInToday(date) ? Color.red :
-                                            Calendar.current.isDate(date, equalTo: viewModel.selectedDate, toGranularity: .day) ? Color.blue.opacity(0.3) : Color.clear
-                                        )
-                                )
-                        }
-                        .buttonStyle(.plain)
+                        MiniCalendarDayCell(
+                            date: date,
+                            isToday: Calendar.current.isDateInToday(date),
+                            isSelected: Calendar.current.isDate(date, inSameDayAs: selectedDate),
+                            isCurrentMonth: Calendar.current.isDate(date, equalTo: displayMonth, toGranularity: .month),
+                            onSelect: { onSelect(date) }
+                        )
                     }
                 }
             }
         }
         .padding(8)
+        .onChange(of: selectedDate) { _, newValue in
+            let newMonth = newValue.startOfMonth()
+            if newMonth != displayMonth {
+                displayMonth = newMonth
+            }
+        }
+    }
+}
+
+private struct MiniCalendarDayCell: View {
+    let date: Date
+    let isToday: Bool
+    let isSelected: Bool
+    let isCurrentMonth: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            Text(date.shortDayString())
+                .font(.system(size: 10))
+                .foregroundColor(isToday ? .white : (isCurrentMonth ? .primary : .gray))
+                .frame(width: 20, height: 20)
+                .background(
+                    Circle()
+                        .fill(isToday ? Color.red : (isSelected ? Color.blue.opacity(0.3) : Color.clear))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(date.dayString())
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

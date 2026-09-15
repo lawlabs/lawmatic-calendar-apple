@@ -5,11 +5,10 @@
 //  Created by Sergey on 30.09.2025.
 //
 
-import Combine
 import SwiftUI
 
 struct DayView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
     let hours = Array(0...23)
     let hourHeight: CGFloat = 60
     private let timeColumnWidth: CGFloat = 58
@@ -68,13 +67,8 @@ struct DayView: View {
                             }
                         }
                     }
-                    .onChange(of: viewModel.selectedDate) { _, _ in
-                        DispatchQueue.main.async {
-                            withAnimation(.easeOut(duration: 0.3)) {
-                                proxy.scrollTo("hour-\(initialScrollHour)", anchor: .top)
-                            }
-                        }
-                    }
+                    // Смена даты не сбрасывает прокрутку: пользователь остаётся
+                    // на том же часе (как в Apple Calendar).
                 }
             }
         }
@@ -164,7 +158,11 @@ struct DayView: View {
                 ScrollView {
                     VStack(spacing: 4) {
                         ForEach(allDayEvents) { event in
-                            AllDayEventRow(event: event, color: viewModel.color(for: event))
+                            AllDayEventRow(
+                                event: event,
+                                color: viewModel.color(for: event),
+                                isSelected: viewModel.selectedEventId == event.id
+                            )
                                 .onTapGesture {
                                     viewModel.selectEvent(event)
                                 }
@@ -201,18 +199,7 @@ struct DayView: View {
                 }
             }
 
-            VStack(spacing: 0) {
-                ForEach(hours, id: \.self) { _ in
-                    Rectangle()
-                        .fill(Color.clear)
-                        .frame(height: hourHeight)
-                        .overlay(
-                            Divider()
-                                .frame(height: 1),
-                            alignment: .top
-                        )
-                }
-            }
+            TimeGridLines(hourHeight: hourHeight, hourCount: hours.count, columnCount: 1)
         }
     }
 
@@ -253,7 +240,7 @@ struct DayView: View {
                     xFraction: layoutInfo.xFraction,
                     widthFraction: layoutInfo.widthFraction,
                     zIndexPriority: layoutInfo.zIndexPriority,
-                    isSelected: viewModel.selectedEvent?.id == layoutInfo.event.id,
+                    isSelected: viewModel.selectedEventId == layoutInfo.event.id,
                     onEventUpdate: { updatedEvent in
                         viewModel.updateEvent(updatedEvent)
                     },
@@ -319,60 +306,17 @@ struct DayView: View {
     }
 }
 
-// MARK: - Current Time Indicator
-
-struct CurrentTimeIndicator: View {
-    @State private var currentTime = Date()
-    let hourHeight: CGFloat
-
-    let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
-
-    var timeString: String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: currentTime)
-    }
-
-    var body: some View {
-        let hour = Calendar.current.component(.hour, from: currentTime)
-        let minute = Calendar.current.component(.minute, from: currentTime)
-        let offset = CGFloat(hour * 60 + minute) * (hourHeight / 60)
-
-        GeometryReader { geometry in
-            HStack(spacing: 0) {
-                Text(timeString)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(Color.red)
-                    )
-                    .offset(x: 8)
-
-                Rectangle()
-                    .fill(Color.red)
-                    .frame(height: 2)
-                    .offset(x: 12)
-            }
-            .offset(y: offset)
-        }
-        .onReceive(timer) { _ in
-            currentTime = Date()
-        }
-    }
-}
-
 // MARK: - All Day Event Row
 
 struct AllDayEventRow: View {
     let event: CalendarEvent
     let color: Color
+    var isSelected: Bool = false
 
-    /// Цвет текста - более тёмный оттенок цвета календаря
+    @Environment(\.colorScheme) private var colorScheme
+
     private var textColor: Color {
-        color.mix(with: .black, by: 0.4)
+        color.eventTextColor(isSelected: isSelected, colorScheme: colorScheme)
     }
 
     var body: some View {
@@ -399,8 +343,12 @@ struct AllDayEventRow: View {
             Spacer()
         }
         .padding(.vertical, 8)
-        .background(color.opacity(0.2))
+        .background(color.opacity(isSelected ? 0.95 : 0.2))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(color.opacity(isSelected ? 0.6 : 0), lineWidth: 1)
+        )
         .padding(.horizontal)
     }
 }

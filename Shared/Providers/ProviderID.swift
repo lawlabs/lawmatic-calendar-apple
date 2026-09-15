@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Используется в `CalendarEvent.externalProvider` для пометки события,
 /// пришедшего из конкретного провайдера, и как ключ в `ProviderRegistry`.
-enum ProviderID: String, Codable, CaseIterable, Identifiable, Hashable {
+enum ProviderID: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
     case legalic
     case google
     case apple

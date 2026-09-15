@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct MonthView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
 
     let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
 
@@ -16,12 +16,7 @@ struct MonthView: View {
     private let allMonths: [Date]
     private let baseMonth: Date
 
-    private var weekDays: [String] {
-        let calendar = Calendar.current
-        let symbols = calendar.veryShortStandaloneWeekdaySymbols
-        let firstWeekdayIndex = max(0, calendar.firstWeekday - 1)
-        return Array(symbols[firstWeekdayIndex...] + symbols[..<firstWeekdayIndex])
-    }
+    private let weekDays = Calendar.current.orderedWeekdaySymbols(.veryShort)
 
     init(viewModel: CalendarViewModel) {
         self.viewModel = viewModel
@@ -88,7 +83,7 @@ struct MonthView: View {
 
 struct MonthGridSection: View {
     let month: Date
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
     let columns: [GridItem]
 
     private static let monthOnlyFormatter: DateFormatter = {
@@ -135,7 +130,7 @@ struct MonthGridSection: View {
                             MonthDayCell(
                                 date: date,
                                 events: viewModel.events(for: date),
-                                viewModel: viewModel,
+                                colorForEvent: { viewModel.color(for: $0) },
                                 isCurrentMonth: Calendar.current.isDate(date, equalTo: month, toGranularity: .month),
                                 isToday: Calendar.current.isDateInToday(date),
                                 isSelected: Calendar.current.isDate(date, equalTo: viewModel.selectedDate, toGranularity: .day),
@@ -159,7 +154,7 @@ struct MonthGridSection: View {
 struct MonthDayCell: View {
     let date: Date
     let events: [CalendarEvent]
-    @ObservedObject var viewModel: CalendarViewModel
+    let colorForEvent: (CalendarEvent) -> Color
     let isCurrentMonth: Bool
     let isToday: Bool
     let isSelected: Bool
@@ -201,7 +196,7 @@ struct MonthDayCell: View {
 
             MonthEventIndicators(
                 events: sortedEvents,
-                viewModel: viewModel,
+                colorForEvent: colorForEvent,
                 maxVisibleIndicators: maxVisibleIndicators
             )
             .padding(.horizontal, 7)
@@ -240,7 +235,7 @@ struct MonthDayCell: View {
 
 struct MonthEventIndicators: View {
     let events: [CalendarEvent]
-    @ObservedObject var viewModel: CalendarViewModel
+    let colorForEvent: (CalendarEvent) -> Color
     let maxVisibleIndicators: Int
 
     private var visibleEvents: [CalendarEvent] {
@@ -251,7 +246,7 @@ struct MonthEventIndicators: View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(visibleEvents) { event in
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(viewModel.color(for: event).opacity(event.isAllDay ? 0.9 : 0.72))
+                    .fill(colorForEvent(event).opacity(event.isAllDay ? 0.9 : 0.72))
                     .frame(height: event.isAllDay ? 5 : 4)
             }
 

@@ -7,35 +7,77 @@
 
 import SwiftUI
 
-/// Режим взаимодействия с событием
-enum EventInteractionMode {
-    case none
-    case dragging
-    case resizingTop
-    case resizingBottom
+/// Вариант оформления блока события в сетке времени.
+enum EventBlockStyle {
+    /// Дневной вид: крупный шрифт, диапазон времени, место.
+    case day
+    /// Недельный вид: компактный шрифт, только время начала.
+    case week
+
+    fileprivate var metrics: Metrics {
+        switch self {
+        case .day:
+            return Metrics(
+                cornerRadius: 6, accentBarWidth: 4, contentSpacing: 2,
+                horizontalPadding: 6, verticalPadding: 4,
+                titleFont: .caption, timeFont: .caption2, clockFont: .system(size: 9),
+                resizeHandleHeight: 8, showsEndTime: true, showsLocation: true
+            )
+        case .week:
+            return Metrics(
+                cornerRadius: 4, accentBarWidth: 3, contentSpacing: 1,
+                horizontalPadding: 3, verticalPadding: 2,
+                titleFont: .system(size: 10), timeFont: .system(size: 8), clockFont: .system(size: 7),
+                resizeHandleHeight: 6, showsEndTime: false, showsLocation: false
+            )
+        }
+    }
+
+    fileprivate struct Metrics {
+        let cornerRadius: CGFloat
+        let accentBarWidth: CGFloat
+        let contentSpacing: CGFloat
+        let horizontalPadding: CGFloat
+        let verticalPadding: CGFloat
+        let titleFont: Font
+        let timeFont: Font
+        let clockFont: Font
+        let resizeHandleHeight: CGFloat
+        let showsEndTime: Bool
+        let showsLocation: Bool
+    }
 }
 
-/// Компонент события с поддержкой перетаскивания и изменения размера
+/// Блок события в сетке времени с перетаскиванием (по времени и, если задан
+/// `dayWidth`, между днями) и изменением длительности за верхний/нижний край.
+///
+/// Во время взаимодействия положение и размер сразу привязываются к сетке
+/// 15 минут, а рядом показывается подсказка с новым временем — то, что
+/// пользователь видит, совпадает с тем, что будет сохранено.
 struct DraggableEventView: View {
     let event: CalendarEvent
     let displayDate: Date
     let color: Color
     let hourHeight: CGFloat
     let containerWidth: CGFloat
+    /// Ширина одной дневной колонки. `nil` — горизонтальное перетаскивание выключено.
+    let dayWidth: CGFloat?
+    let style: EventBlockStyle
     let xFraction: CGFloat
     let widthFraction: CGFloat
     let zIndexPriority: Double
-    let isSelected: Bool     // Выделено ли событие
+    let isSelected: Bool
     let onEventUpdate: (CalendarEvent) -> Void
     let onEventTap: () -> Void
 
-    /// Инициализатор с параметрами наложений по умолчанию (одна колонка = полная ширина)
     init(
         event: CalendarEvent,
         displayDate: Date,
         color: Color,
         hourHeight: CGFloat,
         containerWidth: CGFloat,
+        dayWidth: CGFloat? = nil,
+        style: EventBlockStyle = .day,
         xFraction: CGFloat = 0,
         widthFraction: CGFloat = 1,
         zIndexPriority: Double? = nil,
@@ -48,21 +90,38 @@ struct DraggableEventView: View {
         self.color = color
         self.hourHeight = hourHeight
         self.containerWidth = containerWidth
+        self.dayWidth = dayWidth
+        self.style = style
         self.xFraction = xFraction
         self.widthFraction = widthFraction
-        self.zIndexPriority = zIndexPriority ?? event.startDate.timeIntervalSince1970
+        self.zIndexPriority = zIndexPriority
+            ?? EventLayoutCalculator.zIndexPriority(for: event, on: displayDate)
         self.isSelected = isSelected
         self.onEventUpdate = onEventUpdate
         self.onEventTap = onEventTap
     }
 
-    @State private var interactionMode: EventInteractionMode = .none
-    @State private var dragOffset: CGFloat = 0
+    @Environment(\.colorScheme) private var colorScheme
+
+    private enum InteractionMode {
+        case none, dragging, resizingTop, resizingBottom
+    }
+
+    @State private var interactionMode: InteractionMode = .none
+    @State private var dragOffsetX: CGFloat = 0
+    @State private var dragOffsetY: CGFloat = 0
     @State private var topResizeOffset: CGFloat = 0
     @State private var bottomResizeOffset: CGFloat = 0
 
-    private let resizeHandleHeight: CGFloat = 8
-    private let minimumDuration: TimeInterval = 15 * 60 // 15 минут минимум
+    private static let minimumDuration: TimeInterval = 15 * 60
+    private static let snapMinutes = 15
+    /// zIndex перетаскиваемого блока. `zIndexPriority` лежит в пределах суток
+    /// в секундах (< 86 400), поэтому это значение гарантированно выше.
+    private static let interactingZIndex: Double = 1_000_000
+
+    private var metrics: EventBlockStyle.Metrics { style.metrics }
+
+    // MARK: - Геометрия
 
     private var displayedInterval: DateInterval {
         let calendar = Calendar.current
@@ -73,6 +132,10 @@ struct DraggableEventView: View {
         return DateInterval(start: visibleStart, end: visibleEnd)
     }
 
+    private var pointsPerMinute: CGFloat { hourHeight / 60 }
+    private var snapStep: CGFloat { pointsPerMinute * CGFloat(Self.snapMinutes) }
+    private var minimumHeight: CGFloat { max(20, pointsPerMinute * CGFloat(Self.minimumDuration / 60)) }
+
     var startOffset: CGFloat {
         let startOfDay = Calendar.current.startOfDay(for: displayDate)
         let secondsFromStartOfDay = displayedInterval.start.timeIntervalSince(startOfDay)
@@ -80,103 +143,100 @@ struct DraggableEventView: View {
     }
 
     var eventHeight: CGFloat {
-        return max(CGFloat(displayedInterval.duration) * (hourHeight / 3600), 20)
+        max(CGFloat(displayedInterval.duration) * (hourHeight / 3600), 20)
     }
 
-    /// Ширина события с учётом количества колонок
     var eventWidth: CGFloat {
         max(0, containerWidth * widthFraction - 2)
     }
 
-    /// Горизонтальное смещение события на основе номера колонки
     var horizontalOffset: CGFloat {
         containerWidth * xFraction
     }
 
+    private var isInteracting: Bool {
+        interactionMode != .none
+    }
+
+    // MARK: - Body
+
     var body: some View {
         ZStack(alignment: .top) {
-            // Основное тело события
             eventBody
-
-            // Хендлер верхней границы для ресайза
             topResizeHandle
-
-            // Хендлер нижней границы для ресайза
             bottomResizeHandle
         }
         .frame(width: eventWidth, height: max(1, eventHeight - topResizeOffset + bottomResizeOffset))
-        .offset(x: horizontalOffset, y: startOffset + dragOffset + topResizeOffset)
+        .overlay(alignment: .topLeading) {
+            if isInteracting {
+                interactionTimeLabel
+            }
+        }
+        .offset(x: horizontalOffset + dragOffsetX, y: startOffset + dragOffsetY + topResizeOffset)
         .padding(.horizontal, 1)
-        .zIndex(interactionMode == .dragging ? 2000 : zIndexPriority)
+        .zIndex(isInteracting ? Self.interactingZIndex : zIndexPriority)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityDescription)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    // MARK: - Event Body (Apple Calendar Style)
+    // MARK: - Оформление (в стиле Apple Calendar)
 
-    /// Цвет текста - используем более тёмный оттенок цвета календаря
     private var textColor: Color {
-        // Вычисляем более тёмный оттенок для текста
-        color.opacity(1.0).mix(with: .black, by: 0.4)
+        color.eventTextColor(isSelected: isSelected, colorScheme: colorScheme)
     }
 
-    /// Цвет фона - светлый прозрачный, более насыщенный при выделении
     private var backgroundColor: Color {
         color.opacity(isSelected ? 0.95 : 0.25)
     }
 
-    /// Цвет левой полоски - насыщенный цвет календаря
-    private var accentBarColor: Color {
-        color
-    }
-
     private var eventBody: some View {
         HStack(spacing: 0) {
-            // Яркая вертикальная полоска слева (как в Apple Calendar)
-            RoundedRectangle(cornerRadius: 2)
-                .fill(accentBarColor)
-                .frame(width: 4)
+            RoundedRectangle(cornerRadius: metrics.accentBarWidth / 2)
+                .fill(color)
+                .frame(width: metrics.accentBarWidth)
 
-            // Контент события
-            VStack(alignment: .leading, spacing: 2) {
-                Text(event.title)
-                    .font(.caption)
+            VStack(alignment: .leading, spacing: metrics.contentSpacing) {
+                Text(event.title.isEmpty ? "Новое событие" : event.title)
+                    .font(metrics.titleFont)
                     .fontWeight(.semibold)
                     .lineLimit(2)
                     .foregroundColor(textColor)
 
-                // Время с иконкой часов (как в Apple Calendar)
-                HStack(spacing: 3) {
+                HStack(spacing: metrics.contentSpacing + 1) {
                     Image(systemName: "clock")
-                        .font(.system(size: 9))
-                    Text("\(event.startDate.timeString()) — \(event.endDate.timeString())")
-                        .font(.caption2)
+                        .font(metrics.clockFont)
+                    Text(timeText)
+                        .font(metrics.timeFont)
                 }
                 .foregroundColor(textColor.opacity(0.8))
                 .lineLimit(1)
 
-                if !event.location.isEmpty {
+                if metrics.showsLocation, !event.location.isEmpty {
                     Text(event.location)
-                        .font(.caption2)
+                        .font(metrics.timeFont)
                         .foregroundColor(textColor.opacity(0.7))
                         .lineLimit(1)
                 }
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
+            .padding(.horizontal, metrics.horizontalPadding)
+            .padding(.vertical, metrics.verticalPadding)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: metrics.cornerRadius)
                 .fill(backgroundColor)
-                .opacity(interactionMode != .none ? 0.6 : 1.0)
+                .opacity(isInteracting ? 0.6 : 1.0)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: metrics.cornerRadius))
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: metrics.cornerRadius)
                 .stroke(
-                    accentBarColor.opacity(isSelected ? 0.5 : 0.3),
-                    lineWidth: isSelected ? 1.5 : (interactionMode != .none ? 2 : 0)
+                    color.opacity(isSelected ? 0.5 : 0.3),
+                    lineWidth: isSelected ? 1.5 : (isInteracting ? 1 : 0)
                 )
         )
         .contentShape(Rectangle())
@@ -186,12 +246,39 @@ struct DraggableEventView: View {
         }
     }
 
-    // MARK: - Resize Handles
+    private var timeText: String {
+        if metrics.showsEndTime {
+            return "\(event.startDate.timeString()) — \(event.endDate.timeString())"
+        }
+        return event.startDate.timeString()
+    }
+
+    /// Подсказка с новым временем во время перетаскивания / ресайза.
+    private var interactionTimeLabel: some View {
+        let projected = projectedEvent()
+        return Text("\(projected.startDate.timeString()) — \(projected.endDate.timeString())")
+            .font(.system(size: 10, weight: .semibold))
+            .monospacedDigit()
+            .foregroundColor(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.accentColor))
+            .fixedSize()
+            .offset(x: 2, y: -18)
+            .allowsHitTesting(false)
+    }
+
+    private var accessibilityDescription: String {
+        let title = event.title.isEmpty ? "Новое событие" : event.title
+        return "\(title), \(event.startDate.timeString()) — \(event.endDate.timeString())"
+    }
+
+    // MARK: - Ручки ресайза
 
     private var topResizeHandle: some View {
         Rectangle()
             .fill(Color.clear)
-            .frame(height: resizeHandleHeight)
+            .frame(height: metrics.resizeHandleHeight)
             .contentShape(Rectangle())
             .gesture(topResizeGesture)
             .resizeCursorIfAvailable()
@@ -202,37 +289,104 @@ struct DraggableEventView: View {
             Spacer()
             Rectangle()
                 .fill(Color.clear)
-                .frame(height: resizeHandleHeight)
+                .frame(height: metrics.resizeHandleHeight)
                 .contentShape(Rectangle())
                 .gesture(bottomResizeGesture)
                 .resizeCursorIfAvailable()
         }
     }
 
-    // MARK: - Gestures
+    // MARK: - Расчёт нового времени
+
+    private func minutes(fromPoints points: CGFloat) -> Int {
+        Int((points / pointsPerMinute).rounded())
+    }
+
+    private func snapped(_ points: CGFloat) -> CGFloat {
+        (points / snapStep).rounded() * snapStep
+    }
+
+    private func snappedDayOffset(_ points: CGFloat) -> CGFloat {
+        guard let dayWidth, dayWidth > 0 else { return 0 }
+        return (points / dayWidth).rounded() * dayWidth
+    }
+
+    private var daysDelta: Int {
+        guard let dayWidth, dayWidth > 0 else { return 0 }
+        return Int((dragOffsetX / dayWidth).rounded())
+    }
+
+    /// Событие с учётом текущих смещений — то, что будет сохранено при отпускании.
+    private func projectedEvent() -> CalendarEvent {
+        let calendar = Calendar.current
+        var updated = event
+
+        switch interactionMode {
+        case .dragging:
+            var newStart = event.startDate
+            var newEnd = event.endDate
+            if daysDelta != 0,
+               let shiftedStart = calendar.date(byAdding: .day, value: daysDelta, to: newStart),
+               let shiftedEnd = calendar.date(byAdding: .day, value: daysDelta, to: newEnd) {
+                newStart = shiftedStart
+                newEnd = shiftedEnd
+            }
+            let minutesDelta = minutes(fromPoints: dragOffsetY)
+            if minutesDelta != 0,
+               let shiftedStart = calendar.date(byAdding: .minute, value: minutesDelta, to: newStart),
+               let shiftedEnd = calendar.date(byAdding: .minute, value: minutesDelta, to: newEnd) {
+                newStart = shiftedStart
+                newEnd = shiftedEnd
+            }
+            updated.startDate = newStart
+            updated.endDate = newEnd
+
+        case .resizingTop:
+            let minutesDelta = minutes(fromPoints: topResizeOffset)
+            if minutesDelta != 0,
+               let newStart = calendar.date(byAdding: .minute, value: minutesDelta, to: event.startDate),
+               newStart <= event.endDate.addingTimeInterval(-Self.minimumDuration) {
+                updated.startDate = newStart
+            }
+
+        case .resizingBottom:
+            let minutesDelta = minutes(fromPoints: bottomResizeOffset)
+            if minutesDelta != 0,
+               let newEnd = calendar.date(byAdding: .minute, value: minutesDelta, to: event.endDate),
+               newEnd >= event.startDate.addingTimeInterval(Self.minimumDuration) {
+                updated.endDate = newEnd
+            }
+
+        case .none:
+            break
+        }
+
+        return updated
+    }
+
+    private func commitInteraction() {
+        let updated = projectedEvent()
+        if updated.startDate != event.startDate || updated.endDate != event.endDate {
+            onEventUpdate(updated)
+        }
+        dragOffsetX = 0
+        dragOffsetY = 0
+        topResizeOffset = 0
+        bottomResizeOffset = 0
+        interactionMode = .none
+    }
+
+    // MARK: - Жесты
 
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 5, coordinateSpace: .global)
             .onChanged { value in
                 interactionMode = .dragging
-                dragOffset = value.translation.height
+                dragOffsetX = snappedDayOffset(value.translation.width)
+                dragOffsetY = snapped(value.translation.height)
             }
-            .onEnded { value in
-                let minutesDelta = Int(value.translation.height / (hourHeight / 60))
-                let roundedMinutes = (minutesDelta / 15) * 15 // Округляем до 15 минут
-
-                if roundedMinutes != 0 {
-                    var updatedEvent = event
-                    if let newStart = Calendar.current.date(byAdding: .minute, value: roundedMinutes, to: event.startDate),
-                       let newEnd = Calendar.current.date(byAdding: .minute, value: roundedMinutes, to: event.endDate) {
-                        updatedEvent.startDate = newStart
-                        updatedEvent.endDate = newEnd
-                        onEventUpdate(updatedEvent)
-                    }
-                }
-
-                dragOffset = 0
-                interactionMode = .none
+            .onEnded { _ in
+                commitInteraction()
             }
     }
 
@@ -240,28 +394,12 @@ struct DraggableEventView: View {
         DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .onChanged { value in
                 interactionMode = .resizingTop
-                // Ограничиваем: вверх до начала дня (-startOffset), вниз до минимальной высоты
-                let minOffset = -startOffset // Максимум вверх (отрицательное значение)
-                let maxOffset = eventHeight - 20 // Максимум вниз (положительное значение)
-                topResizeOffset = min(max(value.translation.height, minOffset), maxOffset)
+                let minOffset = -startOffset
+                let maxOffset = eventHeight - minimumHeight
+                topResizeOffset = min(max(snapped(value.translation.height), minOffset), maxOffset)
             }
-            .onEnded { value in
-                let minutesDelta = Int(value.translation.height / (hourHeight / 60))
-                let roundedMinutes = (minutesDelta / 15) * 15
-
-                if roundedMinutes != 0 {
-                    var updatedEvent = event
-                    if let newStart = Calendar.current.date(byAdding: .minute, value: roundedMinutes, to: event.startDate) {
-                        // Проверяем минимальную длительность
-                        if newStart < event.endDate.addingTimeInterval(-minimumDuration) {
-                            updatedEvent.startDate = newStart
-                            onEventUpdate(updatedEvent)
-                        }
-                    }
-                }
-
-                topResizeOffset = 0
-                interactionMode = .none
+            .onEnded { _ in
+                commitInteraction()
             }
     }
 
@@ -269,26 +407,10 @@ struct DraggableEventView: View {
         DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .onChanged { value in
                 interactionMode = .resizingBottom
-                // Ограничиваем, чтобы не сделать событие слишком коротким
-                bottomResizeOffset = max(value.translation.height, -(eventHeight - 20))
+                bottomResizeOffset = max(snapped(value.translation.height), -(eventHeight - minimumHeight))
             }
-            .onEnded { value in
-                let minutesDelta = Int(value.translation.height / (hourHeight / 60))
-                let roundedMinutes = (minutesDelta / 15) * 15
-
-                if roundedMinutes != 0 {
-                    var updatedEvent = event
-                    if let newEnd = Calendar.current.date(byAdding: .minute, value: roundedMinutes, to: event.endDate) {
-                        // Проверяем минимальную длительность
-                        if newEnd > event.startDate.addingTimeInterval(minimumDuration) {
-                            updatedEvent.endDate = newEnd
-                            onEventUpdate(updatedEvent)
-                        }
-                    }
-                }
-
-                bottomResizeOffset = 0
-                interactionMode = .none
+            .onEnded { _ in
+                commitInteraction()
             }
     }
 }

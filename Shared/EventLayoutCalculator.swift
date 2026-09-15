@@ -55,7 +55,7 @@ struct EventLayoutCalculator {
                     widthFraction: 1,
                     overlapDepth: 0,
                     overlapStackCount: 1,
-                    zIndexPriority: zIndexPriority(for: $0)
+                    zIndexPriority: zIndexPriority(for: $0, startOfDay: startOfDay)
                 )
             }
         }
@@ -74,7 +74,7 @@ struct EventLayoutCalculator {
                 event: event,
                 interval: interval,
                 headerInterval: headerInterval,
-                zIndexPriority: zIndexPriority(for: event)
+                zIndexPriority: zIndexPriority(for: event, startOfDay: startOfDay)
             )
         }
 
@@ -137,30 +137,12 @@ struct EventLayoutCalculator {
         }
     }
 
-    static func layoutInfo(
-        for event: CalendarEvent,
-        in events: [CalendarEvent],
-        on day: Date,
-        containerWidth: CGFloat,
-        hourHeight: CGFloat,
-        configuration: EventLayoutConfiguration = EventLayoutConfiguration()
-    ) -> EventLayoutInfo {
-        let allLayouts = calculateLayout(
-            for: events,
-            on: day,
-            containerWidth: containerWidth,
-            hourHeight: hourHeight,
-            configuration: configuration
-        )
-
-        return allLayouts.first { $0.event.id == event.id } ?? EventLayoutInfo(
-            event: event,
-            xFraction: 0,
-            widthFraction: 1,
-            overlapDepth: 0,
-            overlapStackCount: 1,
-            zIndexPriority: zIndexPriority(for: event)
-        )
+    /// Базовый zIndex события в колонке дня: секунды от начала суток.
+    ///
+    /// Значение ограничено сутками (< 86 400), чтобы view могла гарантированно
+    /// поднять перетаскиваемый блок над остальными константой большего порядка.
+    static func zIndexPriority(for event: CalendarEvent, on day: Date) -> Double {
+        zIndexPriority(for: event, startOfDay: Calendar.current.startOfDay(for: day))
     }
 }
 
@@ -190,8 +172,8 @@ private extension EventLayoutCalculator {
         return DateInterval(start: clampedStart, end: clampedEnd)
     }
 
-    static func zIndexPriority(for event: CalendarEvent) -> Double {
-        event.startDate.timeIntervalSince1970
+    static func zIndexPriority(for event: CalendarEvent, startOfDay: Date) -> Double {
+        max(0, event.startDate.timeIntervalSince(startOfDay))
     }
 
     static func calculateHeaderStackMetrics(
@@ -408,16 +390,5 @@ private extension EventLayoutCalculator {
             depth: max(header.depth, body.depth),
             maxStackCount: max(header.maxStackCount, body.maxStackCount)
         )
-    }
-}
-
-private extension CGFloat {
-    func rounded(to places: Int, rule: FloatingPointRoundingRule = .toNearestOrAwayFromZero) -> CGFloat {
-        guard places > 0 else {
-            return rounded(rule)
-        }
-
-        let factor = pow(10, CGFloat(places))
-        return (self * factor).rounded(rule) / factor
     }
 }

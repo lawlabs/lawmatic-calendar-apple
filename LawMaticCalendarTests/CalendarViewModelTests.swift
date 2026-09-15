@@ -218,3 +218,274 @@ final class CalendarViewModelTests: XCTestCase {
         XCTAssertEqual(duration, 15 * 60)
     }
 }
+
+// MARK: - Индекс событий по дням
+
+@MainActor
+final class CalendarViewModelEventIndexTests: XCTestCase {
+    private let calendars = CalendarSeedData.defaultCalendars()
+
+    private func makeViewModel(events: [CalendarEvent] = []) -> (CalendarViewModel, InMemoryCalendarStore) {
+        let store = InMemoryCalendarStore(
+            snapshot: CalendarStoreSnapshot(
+                calendars: calendars,
+                events: events
+            )
+        )
+        return (CalendarViewModel(store: store, saveDebounce: .seconds(60)), store)
+    }
+
+    func testMultiDayEventAppearsOnEveryCoveredDayRegardlessOfQueryTime() throws {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+        let start = calendar.date(bySettingHour: 22, minute: 0, second: 0, of: yesterday)!
+        let end = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: today)!
+        let event = CalendarEvent(title: "Ночной", startDate: start, endDate: end, calendarId: calendars[0].id)
+        let (viewModel, _) = makeViewModel(events: [event])
+
+        // Запрос в середине дня, позже конца события — раньше событие терялось.
+        let midday = calendar.date(bySettingHour: 14, minute: 37, second: 0, of: today)!
+
+        XCTAssertEqual(viewModel.events(for: midday).map(\.id), [event.id])
+        XCTAssertEqual(viewModel.events(for: yesterday).map(\.id), [event.id])
+        XCTAssertTrue(viewModel.hasEvents(on: midday))
+    }
+
+    func testEventEndingExactlyAtMidnightDoesNotLeakIntoNextDay() throws {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+        let start = calendar.date(bySettingHour: 22, minute: 0, second: 0, of: today)!
+        let event = CalendarEvent(title: "До полуночи", startDate: start, endDate: tomorrow, calendarId: calendars[0].id)
+        let (viewModel, _) = makeViewModel(events: [event])
+
+        XCTAssertEqual(viewModel.events(for: today).map(\.id), [event.id])
+        XCTAssertTrue(viewModel.events(for: tomorrow).isEmpty)
+        XCTAssertFalse(viewModel.hasEvents(on: tomorrow))
+    }
+
+    func testHiddenCalendarEventsAreExcludedFromDayQueries() throws {
+        let event = CalendarEvent(
+            title: "Скрытый",
+            startDate: Date(),
+            endDate: Date().addingTimeInterval(3600),
+            calendarId: calendars[0].id
+        )
+        let (viewModel, _) = makeViewModel(events: [event])
+
+        viewModel.toggleCalendarVisibility(calendars[0])
+
+        XCTAssertTrue(viewModel.events(for: Date()).isEmpty)
+        XCTAssertFalse(viewModel.hasEvents(on: Date()))
+        XCTAssertTrue(viewModel.upcomingEvents(from: Date().addingTimeInterval(-60)).isEmpty)
+    }
+
+    func testUpcomingEventsAreSortedAndLimited() throws {
+        let now = Date()
+        var events: [CalendarEvent] = []
+        for offset in 1...8 {
+            let hoursAhead = 9 - offset
+            let start = now.addingTimeInterval(Double(hoursAhead) * 3600)
+            events.append(
+                CalendarEvent(
+                    title: "Событие \(offset)",
+                    startDate: start,
+                    endDate: start.addingTimeInterval(1800),
+                    calendarId: calendars[0].id
+                )
+            )
+        }
+        let (viewModel, _) = makeViewModel(events: events)
+
+        let upcoming = viewModel.upcomingEvents(from: now, limit: 3)
+
+        XCTAssertEqual(upcoming.map(\.title), ["Событие 8", "Событие 7", "Событие 6"])
+    }
+}
+
+// MARK: - Отложенное сохранение
+
+@MainActor
+final class CalendarViewModelPersistenceTests: XCTestCase {
+    private let calendars = CalendarSeedData.defaultCalendars()
+
+    private func makeViewModel(events: [CalendarEvent]) -> (CalendarViewModel, InMemoryCalendarStore) {
+        let store = InMemoryCalendarStore(
+            snapshot: CalendarStoreSnapshot(
+                calendars: calendars,
+                events: events
+            )
+        )
+        return (CalendarViewModel(store: store, saveDebounce: .seconds(60)), store)
+    }
+
+    private func makeEvent() -> CalendarEvent {
+        CalendarEvent(
+            title: "Встреча",
+            startDate: Date(),
+            endDate: Date().addingTimeInterval(3600),
+            calendarId: calendars[0].id
+        )
+    }
+
+    func testInspectorEditsOfExistingEventAreDebounced() throws {
+        let event = makeEvent()
+        let (viewModel, store) = makeViewModel(events: [event])
+        viewModel.selectEvent(event)
+
+        var edited = event
+        edited.title = "Встреча с клиентом"
+        viewModel.applyInspectorChanges(edited)
+
+        XCTAssertEqual(viewModel.selectedEvent?.title, "Встреча с клиентом")
+        XCTAssertTrue(viewModel.hasPendingSaves)
+        XCTAssertEqual(try store.loadEvents().map(\.title), ["Встреча"], "Покомпонентная правка не должна писать на диск сразу")
+
+        viewModel.flushPendingSaves()
+
+        XCTAssertFalse(viewModel.hasPendingSaves)
+        XCTAssertEqual(try store.loadEvents().map(\.title), ["Встреча с клиентом"])
+    }
+
+    func testClosingInspectorFlushesPendingSaves() throws {
+        let event = makeEvent()
+        let (viewModel, store) = makeViewModel(events: [event])
+        viewModel.selectEvent(event)
+
+        var edited = event
+        edited.location = "Офис"
+        viewModel.applyInspectorChanges(edited)
+        viewModel.closeInspector()
+
+        XCTAssertFalse(viewModel.hasPendingSaves)
+        XCTAssertEqual(try store.loadEvents().first?.location, "Офис")
+    }
+
+    func testSelectingAnotherEventFlushesPendingSaves() throws {
+        let first = makeEvent()
+        var second = makeEvent()
+        second.title = "Вторая"
+        let (viewModel, store) = makeViewModel(events: [first, second])
+        viewModel.selectEvent(first)
+
+        var edited = first
+        edited.notes = "Заметка"
+        viewModel.applyInspectorChanges(edited)
+        viewModel.selectEvent(second)
+
+        XCTAssertFalse(viewModel.hasPendingSaves)
+        XCTAssertEqual(try store.loadEvents().first(where: { $0.id == first.id })?.notes, "Заметка")
+    }
+
+    func testDragUpdateIsSavedImmediately() throws {
+        let event = makeEvent()
+        let (viewModel, store) = makeViewModel(events: [event])
+
+        var moved = event
+        moved.startDate = event.startDate.addingTimeInterval(900)
+        moved.endDate = event.endDate.addingTimeInterval(900)
+        viewModel.updateEvent(moved)
+
+        XCTAssertFalse(viewModel.hasPendingSaves)
+        XCTAssertEqual(try store.loadEvents().first?.startDate, moved.startDate)
+    }
+}
+
+// MARK: - Undo
+
+@MainActor
+final class CalendarViewModelUndoTests: XCTestCase {
+    private let calendars = CalendarSeedData.defaultCalendars()
+
+    private func makeViewModel(events: [CalendarEvent]) -> (CalendarViewModel, InMemoryCalendarStore, UndoManager) {
+        let store = InMemoryCalendarStore(
+            snapshot: CalendarStoreSnapshot(calendars: calendars, events: events)
+        )
+        let viewModel = CalendarViewModel(store: store, saveDebounce: .seconds(60))
+        let undoManager = UndoManager()
+        viewModel.undoManager = undoManager
+        return (viewModel, store, undoManager)
+    }
+
+    private func makeEvent(title: String = "Встреча") -> CalendarEvent {
+        CalendarEvent(
+            title: title,
+            startDate: Date(),
+            endDate: Date().addingTimeInterval(3600),
+            calendarId: calendars[0].id
+        )
+    }
+
+    func testDeleteCanBeUndoneAndRedone() throws {
+        let event = makeEvent()
+        let (viewModel, store, undoManager) = makeViewModel(events: [event])
+
+        viewModel.deleteEvent(event)
+        XCTAssertTrue(viewModel.events.isEmpty)
+        XCTAssertTrue(undoManager.canUndo)
+
+        undoManager.undo()
+        XCTAssertEqual(viewModel.events.map(\.id), [event.id])
+        XCTAssertEqual(try store.loadEvents().map(\.id), [event.id])
+        XCTAssertEqual(viewModel.selectedEventId, event.id)
+
+        undoManager.redo()
+        XCTAssertTrue(viewModel.events.isEmpty)
+    }
+
+    func testDragUpdateCanBeUndone() throws {
+        let event = makeEvent()
+        let (viewModel, store, undoManager) = makeViewModel(events: [event])
+
+        var moved = event
+        moved.startDate = event.startDate.addingTimeInterval(1800)
+        moved.endDate = event.endDate.addingTimeInterval(1800)
+        viewModel.updateEvent(moved)
+        XCTAssertEqual(viewModel.events.first?.startDate, moved.startDate)
+
+        undoManager.undo()
+
+        XCTAssertEqual(viewModel.events.first?.startDate, event.startDate)
+        XCTAssertEqual(try store.loadEvents().first?.startDate, event.startDate)
+    }
+
+    func testDebouncedInspectorEditsDoNotSpamUndoStack() throws {
+        let event = makeEvent()
+        let (viewModel, _, undoManager) = makeViewModel(events: [event])
+        viewModel.selectEvent(event)
+
+        for suffix in ["В", "Вс", "Вст"] {
+            var edited = event
+            edited.title = suffix
+            viewModel.applyInspectorChanges(edited)
+        }
+
+        XCTAssertFalse(undoManager.canUndo)
+    }
+
+    func testUndoingDeleteOfRemoteEventCancelsQueuedTombstone() throws {
+        var calendars = self.calendars
+        calendars[0].externalProvider = .google
+        calendars[0].externalId = "primary"
+        var event = makeEvent()
+        event.externalProvider = .google
+        event.externalCalendarId = "primary"
+        event.externalId = "remote-1"
+        let store = InMemoryCalendarStore(
+            snapshot: CalendarStoreSnapshot(calendars: calendars, events: [event])
+        )
+        let viewModel = CalendarViewModel(store: store, saveDebounce: .seconds(60))
+        let undoManager = UndoManager()
+        viewModel.undoManager = undoManager
+
+        viewModel.deleteEvent(event)
+        XCTAssertEqual(viewModel.pendingDeletions.count, 1)
+
+        undoManager.undo()
+
+        XCTAssertTrue(viewModel.pendingDeletions.isEmpty)
+        XCTAssertEqual(viewModel.events.first?.externalId, "remote-1")
+        XCTAssertEqual(viewModel.events.first?.syncState, .clean)
+    }
+}

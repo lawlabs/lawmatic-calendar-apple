@@ -1,14 +1,28 @@
 import Foundation
+import os
 
+/// Логирование интеграции LEGALIC через `os.Logger`.
+///
+/// Сообщения помечены `privacy: .private`: в release-логах они видны только
+/// при включённом профиле отладки, а тела ответов (в них данные клиентов)
+/// пишутся только в DEBUG-сборках.
 enum LegalicLogger {
+    private static let logger = Logger(subsystem: "com.lawmatic.calendar", category: "legalic")
+
     static func line(_ message: String) {
-        print("[LEGALIC] \(message)")
+        logger.info("\(message, privacy: .private)")
+    }
+
+    static func error(_ message: String) {
+        logger.error("\(message, privacy: .private)")
     }
 
     static func debugBodyPreview(_ data: Data, maxBytes: Int = 1200) {
+        #if DEBUG
         let prefix = data.prefix(maxBytes)
         let text = String(data: prefix, encoding: .utf8) ?? "<не UTF-8, байт: \(data.count)>"
-        line("Тело ответа (первые \(prefix.count) байт):\n\(text)")
+        logger.debug("Тело ответа (первые \(prefix.count) байт):\n\(text, privacy: .private)")
+        #endif
     }
 
     static func maskedApiKey(_ key: String) -> String {

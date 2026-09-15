@@ -2,7 +2,7 @@
 import SwiftUI
 
 struct MacDayView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
     let hours = Array(0...23)
     let hourHeight: CGFloat = 60
     private let timeColumnWidth: CGFloat = 58
@@ -71,13 +71,8 @@ struct MacDayView: View {
                             }
                         }
                     }
-                    .onChange(of: viewModel.selectedDate) { _, _ in
-                        DispatchQueue.main.async {
-                            withAnimation(.easeOut(duration: 0.3)) {
-                                proxy.scrollTo("hour-\(initialScrollHour)", anchor: .top)
-                            }
-                        }
-                    }
+                    // Смена даты не сбрасывает прокрутку: пользователь остаётся
+                    // на том же часе (как в Apple Calendar).
                 }
             }
         }
@@ -99,7 +94,11 @@ struct MacDayView: View {
                 ScrollView {
                     VStack(spacing: 4) {
                         ForEach(allDayEvents) { event in
-                            AllDayEventRow(event: event, color: viewModel.color(for: event))
+                            AllDayEventRow(
+                                event: event,
+                                color: viewModel.color(for: event),
+                                isSelected: viewModel.selectedEventId == event.id
+                            )
                                 .onTapGesture {
                                     viewModel.selectEvent(event)
                                 }
@@ -134,18 +133,7 @@ struct MacDayView: View {
                 }
             }
 
-            VStack(spacing: 0) {
-                ForEach(hours, id: \.self) { _ in
-                    Rectangle()
-                        .fill(Color.clear)
-                        .frame(height: hourHeight)
-                        .overlay(
-                            Divider()
-                                .frame(height: 1),
-                            alignment: .top
-                        )
-                }
-            }
+            TimeGridLines(hourHeight: hourHeight, hourCount: hours.count, columnCount: 1)
         }
     }
 
@@ -184,7 +172,7 @@ struct MacDayView: View {
                     xFraction: layoutInfo.xFraction,
                     widthFraction: layoutInfo.widthFraction,
                     zIndexPriority: layoutInfo.zIndexPriority,
-                    isSelected: viewModel.selectedEvent?.id == layoutInfo.event.id,
+                    isSelected: viewModel.selectedEventId == layoutInfo.event.id,
                     onEventUpdate: { updatedEvent in
                         viewModel.updateEvent(updatedEvent)
                     },

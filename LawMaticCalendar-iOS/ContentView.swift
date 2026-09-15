@@ -10,7 +10,9 @@ import SwiftUI
 @MainActor
 struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @StateObject private var viewModel = CalendarViewModel()
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.undoManager) private var undoManager
+    @State private var viewModel = CalendarViewModel()
     @State private var isSettingsPresented = false
 
     private var isCompactLayout: Bool {
@@ -61,12 +63,28 @@ struct ContentView: View {
                 dismissButton: .default(Text("OK"))
             )
         }
-        .alert(item: $viewModel.legalicSyncError) { error in
+        .alert(item: $viewModel.syncError) { error in
             Alert(
                 title: Text(error.title),
                 message: Text(error.message),
                 dismissButton: .default(Text("OK"))
             )
+        }
+        .onAppear {
+            viewModel.undoManager = undoManager
+            viewModel.startPeriodicSync()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                viewModel.handleDidBecomeActive()
+            case .inactive:
+                viewModel.flushPendingSaves()
+            case .background:
+                viewModel.prepareForTermination()
+            @unknown default:
+                break
+            }
         }
     }
 
@@ -155,7 +173,7 @@ struct ContentView: View {
 }
 
 private struct IOSCalendarWorkspaceView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+    @Bindable var viewModel: CalendarViewModel
     let isCompactLayout: Bool
     @Binding var isSettingsPresented: Bool
 

@@ -16,14 +16,14 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
     }
     @Published var apiKey: String {
         didSet {
-            try? KeychainStore.set(apiKey, service: Keys.keychainService, account: Keys.apiKey)
             refreshCredentialStatus()
+            schedulePersistCredentials()
         }
     }
     @Published var apiSecret: String {
         didSet {
-            try? KeychainStore.set(apiSecret, service: Keys.keychainService, account: Keys.apiSecret)
             refreshCredentialStatus()
+            schedulePersistCredentials()
         }
     }
     @Published var apiBaseURL: String {
@@ -57,6 +57,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
     }
 
     private let apiClient: LegalicAPIClient
+    private var persistCredentialsTask: Task<Void, Never>?
 
     init(apiClient: LegalicAPIClient = .shared) {
         self.apiClient = apiClient
@@ -81,6 +82,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
 
     func signIn() async throws {
         guard hasCredentials else { throw ProviderError.missingCredentials(provider: id) }
+        persistCredentialsNow()
         status = .syncing
         do {
             try await apiClient.validateCredentials(
@@ -190,6 +192,28 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
         items.append(URLQueryItem(name: tasksQueryParamTo, value: Self.iso8601.string(from: visibleDateRange.upperBound)))
         components.queryItems = items
         return components.url ?? url
+    }
+
+    /// Ключи вводятся посимвольно в TextField; писать в Keychain на каждый
+    /// символ дорого (миллисекунды на запись) — откладываем до паузы в вводе.
+    private func schedulePersistCredentials() {
+        persistCredentialsTask?.cancel()
+        persistCredentialsTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.persistCredentialsNow()
+        }
+    }
+
+    func persistCredentialsNow() {
+        persistCredentialsTask?.cancel()
+        persistCredentialsTask = nil
+        do {
+            try KeychainStore.set(apiKey, service: Keys.keychainService, account: Keys.apiKey)
+            try KeychainStore.set(apiSecret, service: Keys.keychainService, account: Keys.apiSecret)
+        } catch {
+            LegalicLogger.error("Не удалось сохранить ключи в Keychain: \(error.localizedDescription)")
+        }
     }
 
     private func refreshCredentialStatus() {

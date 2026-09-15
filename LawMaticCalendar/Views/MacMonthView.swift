@@ -2,21 +2,27 @@
 import SwiftUI
 
 struct MacMonthView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
 
-    let weekDays = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"]
-    let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
+    private let weekDays = Calendar.current.orderedWeekdaySymbols(.short)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
 
-    private static let monthRange = -24...24
-    private let allMonths: [Date]
-    private let baseMonth: Date
+    /// Месяцы вокруг якоря. Якорь фиксируется при первом показе, а диапазон
+    /// только расширяется по краям, когда пользователь уходит далеко, —
+    /// пересоздание массива вокруг новой даты сдвигало бы содержимое над
+    /// текущей позицией и вызывало скачок скролла.
+    @State private var anchorMonth: Date
+    @State private var monthOffsets: ClosedRange<Int> = -24 ... 24
+    private static let edgeMargin = 6
 
     init(viewModel: CalendarViewModel) {
         self.viewModel = viewModel
-        let start = viewModel.selectedDate.startOfMonth()
-        self.baseMonth = start
-        self.allMonths = Self.monthRange.compactMap { offset in
-            Calendar.current.date(byAdding: .month, value: offset, to: start)
+        _anchorMonth = State(initialValue: viewModel.selectedDate.startOfMonth())
+    }
+
+    private var allMonths: [Date] {
+        monthOffsets.compactMap { offset in
+            Calendar.current.date(byAdding: .month, value: offset, to: anchorMonth)
         }
     }
 
@@ -51,11 +57,13 @@ struct MacMonthView: View {
                 }
                 .onAppear {
                     DispatchQueue.main.async {
-                        proxy.scrollTo(monthId(for: baseMonth), anchor: .top)
+                        proxy.scrollTo(monthId(for: viewModel.selectedDate.startOfMonth()), anchor: .top)
                     }
                 }
-                .onChange(of: viewModel.selectedDate) { _, newDate in
+                .onChange(of: viewModel.selectedDate) { oldDate, newDate in
                     let newMonth = newDate.startOfMonth()
+                    guard newMonth != oldDate.startOfMonth() else { return }
+                    extendRangeIfNeeded(for: newMonth)
                     DispatchQueue.main.async {
                         withAnimation(.easeOut(duration: 0.3)) {
                             proxy.scrollTo(monthId(for: newMonth), anchor: .top)
@@ -63,6 +71,15 @@ struct MacMonthView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func extendRangeIfNeeded(for month: Date) {
+        let offset = Calendar.current.dateComponents([.month], from: anchorMonth, to: month).month ?? 0
+        if offset - Self.edgeMargin < monthOffsets.lowerBound {
+            monthOffsets = (offset - 24) ... monthOffsets.upperBound
+        } else if offset + Self.edgeMargin > monthOffsets.upperBound {
+            monthOffsets = monthOffsets.lowerBound ... (offset + 24)
         }
     }
 
@@ -74,21 +91,17 @@ struct MacMonthView: View {
 
 struct MacMonthGridSection: View {
     let month: Date
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
     let columns: [GridItem]
 
-    var weeks: [[Date]] {
+    private var weeks: [[Date]] {
         month.getAllWeeksInMonth()
-    }
-
-    var monthTitle: String {
-        month.monthYearString()
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(monthTitle)
+                Text(month.monthYearString())
                     .font(.title2)
                     .fontWeight(.bold)
                     .padding(.leading, 8)
@@ -105,22 +118,8 @@ struct MacMonthGridSection: View {
                             Color.clear
                                 .frame(height: 110)
                         } else {
-                            MacMonthDayCell(
-                                date: date,
-                                events: viewModel.events(for: date),
-                                viewModel: viewModel,
-                                isCurrentMonth: Calendar.current.isDate(date, equalTo: month, toGranularity: .month),
-                                isToday: Calendar.current.isDateInToday(date),
-                                isSelected: Calendar.current.isDate(date, equalTo: viewModel.selectedDate, toGranularity: .day),
-                                onEventTap: { event in
-                                    viewModel.selectEvent(event)
-                                },
-                                onDayTap: {
-                                    viewModel.selectedDate = date
-                                    viewModel.clearSelection()
-                                }
-                            )
-                            .frame(height: 110)
+                            dayCell(for: date)
+                                .frame(height: 110)
                         }
                     }
                 }
@@ -128,19 +127,66 @@ struct MacMonthGridSection: View {
             .padding(.horizontal, 4)
         }
     }
+
+    private func dayCell(for date: Date) -> some View {
+        let events = viewModel.events(for: date)
+        let selectedID = viewModel.selectedEventId
+        let rows = events.map { event in
+            MonthEventRowModel(
+                id: event.id,
+                title: event.title,
+                isAllDay: event.isAllDay,
+                timeText: event.startDate.timeString(),
+                color: viewModel.color(for: event),
+                isSelected: event.id == selectedID
+            )
+        }
+
+        return MacMonthDayCell(
+            date: date,
+            rows: rows,
+            isCurrentMonth: Calendar.current.isDate(date, equalTo: month, toGranularity: .month),
+            isToday: Calendar.current.isDateInToday(date),
+            isSelected: Calendar.current.isDate(date, equalTo: viewModel.selectedDate, toGranularity: .day),
+            onEventTap: { eventID in
+                if let event = events.first(where: { $0.id == eventID }) {
+                    viewModel.selectEvent(event)
+                }
+            },
+            onDayTap: {
+                viewModel.selectedDate = date
+                viewModel.clearSelection()
+            },
+            onDayDoubleTap: {
+                viewModel.selectedDate = date
+                viewModel.viewMode = .day
+            }
+        )
+    }
+}
+
+/// Плоская модель строки события в ячейке месяца — ячейка не зависит от VM.
+struct MonthEventRowModel: Identifiable, Equatable {
+    let id: UUID
+    let title: String
+    let isAllDay: Bool
+    let timeText: String
+    let color: Color
+    let isSelected: Bool
 }
 
 struct MacMonthDayCell: View {
     let date: Date
-    let events: [CalendarEvent]
-    @ObservedObject var viewModel: CalendarViewModel
+    let rows: [MonthEventRowModel]
     let isCurrentMonth: Bool
     let isToday: Bool
     let isSelected: Bool
-    let onEventTap: (CalendarEvent) -> Void
+    let onEventTap: (UUID) -> Void
     let onDayTap: () -> Void
+    let onDayDoubleTap: () -> Void
 
     private let maxVisibleEvents = 4
+    @State private var isOverflowPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -162,25 +208,36 @@ struct MacMonthDayCell: View {
                 Spacer()
             }
 
-            if !events.isEmpty {
+            if !rows.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(events.prefix(maxVisibleEvents)) { event in
-                        MacMonthEventRow(
-                            event: event,
-                            color: viewModel.color(for: event),
-                            isSelected: viewModel.selectedEvent?.id == event.id
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            onEventTap(event)
-                        }
+                    ForEach(rows.prefix(maxVisibleEvents)) { row in
+                        MacMonthEventRow(row: row)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                onEventTap(row.id)
+                            }
                     }
 
-                    if events.count > maxVisibleEvents {
-                        Text("+ ещё \(events.count - maxVisibleEvents)")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .padding(.leading, 4)
+                    if rows.count > maxVisibleEvents {
+                        Button {
+                            isOverflowPresented = true
+                        } label: {
+                            Text("+ ещё \(rows.count - maxVisibleEvents)")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $isOverflowPresented, arrowEdge: .trailing) {
+                            MacMonthOverflowPopover(
+                                date: date,
+                                rows: rows,
+                                onEventTap: { id in
+                                    isOverflowPresented = false
+                                    onEventTap(id)
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -196,6 +253,9 @@ struct MacMonthDayCell: View {
                 )
         )
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            onDayDoubleTap()
+        }
         .onTapGesture {
             onDayTap()
         }
@@ -203,50 +263,90 @@ struct MacMonthDayCell: View {
             Rectangle()
                 .stroke(Color.gray.opacity(0.15), lineWidth: 0.5)
         )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        let base = date.dayString()
+        if rows.isEmpty { return base }
+        return "\(base), событий: \(rows.count)"
     }
 }
 
 struct MacMonthEventRow: View {
-    let event: CalendarEvent
-    let color: Color
-    let isSelected: Bool
+    let row: MonthEventRowModel
+
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 4) {
-            if event.isAllDay {
-                Text(event.title)
+            if row.isAllDay {
+                Text(row.title)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(row.color.eventTextColor(isSelected: true, colorScheme: colorScheme))
                     .lineLimit(1)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(color.opacity(isSelected ? 1.0 : 0.85))
+                            .fill(row.color.opacity(row.isSelected ? 1.0 : 0.85))
                     )
             } else {
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(color)
+                    .fill(row.color)
                     .frame(width: 3, height: 14)
 
-                Text(event.title)
+                Text(row.title)
                     .font(.system(size: 10))
-                    .foregroundColor(.primary)
+                    .foregroundColor(row.isSelected
+                        ? row.color.eventTextColor(isSelected: true, colorScheme: colorScheme)
+                        : .primary)
                     .lineLimit(1)
 
                 Spacer(minLength: 2)
 
-                Text(event.startDate.timeString())
+                Text(row.timeText)
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(row.isSelected
+                        ? row.color.eventTextColor(isSelected: true, colorScheme: colorScheme).opacity(0.8)
+                        : .secondary)
             }
         }
         .padding(.horizontal, 3)
         .background(
             RoundedRectangle(cornerRadius: 3)
-                .fill(isSelected ? color.opacity(0.95) : Color.clear)
+                .fill(row.isSelected ? row.color.opacity(0.95) : Color.clear)
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.isAllDay ? "\(row.title), весь день" : "\(row.title), \(row.timeText)")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// Список всех событий дня для «+ ещё N».
+private struct MacMonthOverflowPopover: View {
+    let date: Date
+    let rows: [MonthEventRowModel]
+    let onEventTap: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(date.dayString())
+                .font(.headline)
+                .padding(.bottom, 4)
+
+            ForEach(rows) { row in
+                MacMonthEventRow(row: row)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        onEventTap(row.id)
+                    }
+            }
+        }
+        .padding(12)
+        .frame(minWidth: 240, maxWidth: 360)
     }
 }
 #endif

@@ -7,9 +7,99 @@
 
 import SwiftUI
 
-/// Inspector панель для просмотра и редактирования события (как в Apple Calendar)
+/// Inspector панель для просмотра и редактирования события (как в Apple Calendar).
 struct EventInspectorView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
+
+    var body: some View {
+        Group {
+            if let event = viewModel.selectedEvent, let state = viewModel.inspectorState {
+                EventEditorForm(
+                    event: event,
+                    isCreating: {
+                        if case .create = state { return true }
+                        return false
+                    }(),
+                    isReadOnly: !viewModel.canEdit(event),
+                    calendars: viewModel.calendars,
+                    onChange: { viewModel.applyInspectorChanges($0) },
+                    onDelete: { viewModel.deleteEvent(event) }
+                )
+                // Новая идентичность на каждое событие: @State формы
+                // создаётся заново, без ручной «перезагрузки» полей.
+                .id(event.id)
+            } else {
+                emptyStateView
+            }
+        }
+        .frame(minWidth: 280, idealWidth: 320, maxWidth: 400)
+    }
+
+    private var emptyStateView: some View {
+        VStack(spacing: 12) {
+            Spacer()
+
+            Image(systemName: "calendar.badge.plus")
+                .font(.system(size: 28))
+                .foregroundStyle(.tertiary)
+
+            Text("Событие не выбрано")
+                .font(.title3)
+                .foregroundColor(.secondary)
+
+            Text("Выберите событие или создайте новое двойным щелчком по сетке.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Редактируемые поля события. Отдельная структура, чтобы один `onChange`
+/// обрабатывал все правки, а сравнение с событием было тривиальным.
+private struct EventDraft: Equatable {
+    var title: String
+    var location: String
+    var startDate: Date
+    var endDate: Date
+    var isAllDay: Bool
+    var notes: String
+    var calendarId: UUID
+
+    init(_ event: CalendarEvent) {
+        title = event.title
+        location = event.location
+        startDate = event.startDate
+        endDate = event.endDate
+        isAllDay = event.isAllDay
+        notes = event.notes
+        calendarId = event.calendarId
+    }
+
+    func applied(to event: CalendarEvent) -> CalendarEvent {
+        var updated = event
+        updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.location = location
+        updated.startDate = startDate
+        updated.endDate = endDate
+        updated.isAllDay = isAllDay
+        updated.notes = notes
+        updated.calendarId = calendarId
+        return updated
+    }
+}
+
+private struct EventEditorForm: View {
+    let event: CalendarEvent
+    let isCreating: Bool
+    let isReadOnly: Bool
+    let calendars: [CalendarItem]
+    let onChange: (CalendarEvent) -> Void
+    let onDelete: () -> Void
 
     private enum FocusField {
         case title
@@ -17,89 +107,39 @@ struct EventInspectorView: View {
         case notes
     }
 
-    // Состояния редактирования
-    @State private var title: String = ""
-    @State private var location: String = ""
-    @State private var startDate: Date = Date()
-    @State private var endDate: Date = Date().addingTimeInterval(3600)
-    @State private var isAllDay: Bool = false
-    @State private var notes: String = ""
-    @State private var selectedCalendarId: UUID = UUID()
+    @State private var draft: EventDraft
+    /// Последняя версия, которую форма отправила во VM. Нужна, чтобы отличить
+    /// «эхо» собственной правки от внешнего изменения (drag, синк).
+    @State private var lastPushedEvent: CalendarEvent
     @FocusState private var focusedField: FocusField?
-    @State private var isApplyingModelState = false
 
-    private var inspectedEvent: CalendarEvent? {
-        viewModel.selectedEvent
+    init(
+        event: CalendarEvent,
+        isCreating: Bool,
+        isReadOnly: Bool,
+        calendars: [CalendarItem],
+        onChange: @escaping (CalendarEvent) -> Void,
+        onDelete: @escaping () -> Void
+    ) {
+        self.event = event
+        self.isCreating = isCreating
+        self.isReadOnly = isReadOnly
+        self.calendars = calendars
+        self.onChange = onChange
+        self.onDelete = onDelete
+        _draft = State(initialValue: EventDraft(event))
+        _lastPushedEvent = State(initialValue: event)
     }
 
-    private var isCreatingNewEvent: Bool {
-        if case .create = viewModel.inspectorState {
-            return true
-        }
-
-        return false
+    private var selectedCalendar: CalendarItem? {
+        calendars.first { $0.id == draft.calendarId }
     }
 
-    private var isReadOnly: Bool {
-        guard let event = inspectedEvent else { return false }
-        return !viewModel.canEdit(event)
+    private var selectableCalendars: [CalendarItem] {
+        calendars.filter { $0.isWritable || $0.id == draft.calendarId }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            InspectorMiniCalendar(viewModel: viewModel)
-
-            Divider()
-
-            if inspectedEvent != nil {
-                editorView
-            } else {
-                emptyStateView
-            }
-        }
-        .frame(minWidth: 280, idealWidth: 320, maxWidth: 400)
-        .onChange(of: viewModel.inspectorState) { _, _ in
-            DispatchQueue.main.async {
-                loadEventData()
-                updateFocus()
-            }
-        }
-        .onChange(of: inspectedEvent?.startDate) { _, _ in
-            syncDraftTimingIfNeeded()
-        }
-        .onChange(of: inspectedEvent?.endDate) { _, _ in
-            syncDraftTimingIfNeeded()
-        }
-        .onAppear {
-            DispatchQueue.main.async {
-                loadEventData()
-                updateFocus()
-            }
-        }
-        .onChange(of: title) { _, _ in
-            persistChangesIfNeeded()
-        }
-        .onChange(of: location) { _, _ in
-            persistChangesIfNeeded()
-        }
-        .onChange(of: startDate) { _, _ in
-            persistChangesIfNeeded()
-        }
-        .onChange(of: endDate) { _, _ in
-            persistChangesIfNeeded()
-        }
-        .onChange(of: isAllDay) { _, _ in
-            persistChangesIfNeeded()
-        }
-        .onChange(of: notes) { _, _ in
-            persistChangesIfNeeded()
-        }
-        .onChange(of: selectedCalendarId) { _, _ in
-            persistChangesIfNeeded()
-        }
-    }
-
-    private var editorView: some View {
         Form {
             if isReadOnly {
                 Section {
@@ -108,6 +148,7 @@ struct EventInspectorView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
             Section {
                 if let selectedCalendar {
                     HStack(spacing: 8) {
@@ -122,35 +163,37 @@ struct EventInspectorView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                TextField("Название", text: $title)
+                TextField("Название", text: $draft.title)
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($focusedField, equals: .title)
+                    .accessibilityLabel("Название события")
 
-                TextField("Место или видеозвонок", text: $location)
+                TextField("Место или видеозвонок", text: $draft.location)
                     .textFieldStyle(.plain)
                     .focused($focusedField, equals: .location)
+                    .accessibilityLabel("Место")
             }
 
             Section {
-                Toggle("Весь день", isOn: $isAllDay)
+                Toggle("Весь день", isOn: $draft.isAllDay)
 
                 DatePicker(
                     "Начало",
-                    selection: $startDate,
-                    displayedComponents: isAllDay ? [.date] : [.date, .hourAndMinute]
+                    selection: $draft.startDate,
+                    displayedComponents: draft.isAllDay ? [.date] : [.date, .hourAndMinute]
                 )
 
                 DatePicker(
                     "Конец",
-                    selection: $endDate,
-                    displayedComponents: isAllDay ? [.date] : [.date, .hourAndMinute]
+                    selection: $draft.endDate,
+                    displayedComponents: draft.isAllDay ? [.date] : [.date, .hourAndMinute]
                 )
             }
 
             Section("Календарь") {
-                Picker("Календарь", selection: $selectedCalendarId) {
-                    ForEach(viewModel.calendars.filter { $0.isWritable || $0.id == selectedCalendarId }) { calendar in
+                Picker("Календарь", selection: $draft.calendarId) {
+                    ForEach(selectableCalendars) { calendar in
                         HStack(spacing: 8) {
                             Circle()
                                 .fill(calendar.color.color)
@@ -164,166 +207,57 @@ struct EventInspectorView: View {
             }
 
             Section("Заметки") {
-                TextEditor(text: $notes)
+                TextEditor(text: $draft.notes)
                     .frame(minHeight: 120)
                     .focused($focusedField, equals: .notes)
+                    .accessibilityLabel("Заметки")
             }
 
-            if let event = inspectedEvent {
-                Section {
-                    Button(role: .destructive) {
-                        viewModel.deleteEvent(event)
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Text("Удалить событие")
-                            Spacer()
-                        }
+            Section {
+                Button(role: .destructive, action: onDelete) {
+                    HStack {
+                        Spacer()
+                        Text("Удалить событие")
+                        Spacer()
                     }
                 }
             }
         }
         .formStyle(.grouped)
         .disabled(isReadOnly)
-    }
-
-    // MARK: - Empty State (событие не выбрано)
-
-    private var emptyStateView: some View {
-        VStack(spacing: 16) {
-            Spacer()
-
-            Text("Событие не выбрано")
-                .font(.title3)
-                .foregroundColor(.secondary)
-
-            Spacer()
+        .onAppear {
+            if isCreating, draft.title.isEmpty {
+                focusedField = .title
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // MARK: - Helpers
-
-    private func loadEventData() {
-        isApplyingModelState = true
-        let event = inspectedEvent
-
-        if let event = event {
-            title = event.title
-            location = event.location
-            startDate = event.startDate
-            endDate = event.endDate
-            isAllDay = event.isAllDay
-            notes = event.notes
-            selectedCalendarId = event.calendarId
-        } else {
-            let defaultDates = viewModel.defaultDatesForNewEvent()
-            title = ""
-            location = ""
-            startDate = defaultDates.start
-            endDate = defaultDates.end
-            isAllDay = false
-            notes = ""
-            selectedCalendarId = viewModel.defaultCalendarId
+        .onChange(of: draft) { _, _ in
+            pushDraftIfNeeded()
         }
-
-        DispatchQueue.main.async {
-            isApplyingModelState = false
+        .onChange(of: event) { _, newEvent in
+            // Внешнее изменение (перетаскивание, растяжение черновика,
+            // синхронизация) — перечитать поля. Собственное эхо пропускаем.
+            // Сравниваем только редактируемые поля: VM дописывает служебные
+            // (localUpdatedAt, syncState), и это не повод перечитывать форму.
+            guard EventDraft(newEvent) != EventDraft(lastPushedEvent) else { return }
+            lastPushedEvent = newEvent
+            draft = EventDraft(newEvent)
         }
     }
 
-    private func updateFocus() {
-        guard focusedField == nil, isCreatingNewEvent, title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    private func pushDraftIfNeeded() {
+        guard !isReadOnly else { return }
+
+        let minimumDuration: TimeInterval = draft.isAllDay ? 0 : 15 * 60
+        let normalizedEndDate = max(draft.endDate, draft.startDate.addingTimeInterval(minimumDuration))
+        if normalizedEndDate != draft.endDate {
+            draft.endDate = normalizedEndDate
             return
         }
 
-        focusedField = .title
-    }
+        let updated = draft.applied(to: event)
+        guard updated != event else { return }
 
-    private func syncDraftTimingIfNeeded() {
-        guard isCreatingNewEvent, let event = inspectedEvent else { return }
-        isApplyingModelState = true
-        startDate = event.startDate
-        endDate = event.endDate
-        isAllDay = event.isAllDay
-        selectedCalendarId = event.calendarId
-        DispatchQueue.main.async {
-            isApplyingModelState = false
-        }
-    }
-
-    private var selectedCalendar: CalendarItem? {
-        viewModel.calendars.first { $0.id == selectedCalendarId }
-    }
-
-    private func persistChangesIfNeeded() {
-        guard !isApplyingModelState, let existingEvent = inspectedEvent else {
-            return
-        }
-        guard viewModel.canEdit(existingEvent) else { return }
-
-        let minimumDuration: TimeInterval = isAllDay ? 0 : 15 * 60
-        let normalizedEndDate = max(endDate, startDate.addingTimeInterval(minimumDuration))
-        if normalizedEndDate != endDate {
-            endDate = normalizedEndDate
-            return
-        }
-
-        var updatedEvent = existingEvent
-        updatedEvent.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        updatedEvent.startDate = startDate
-        updatedEvent.endDate = normalizedEndDate
-        updatedEvent.isAllDay = isAllDay
-        updatedEvent.notes = notes
-        updatedEvent.location = location
-        updatedEvent.calendarId = selectedCalendarId
-
-        guard updatedEvent != existingEvent else {
-            return
-        }
-
-        viewModel.applyInspectorChanges(updatedEvent)
-    }
-}
-
-// MARK: - Обёртка для календарика в инспекторе с навигацией
-
-struct InspectorMiniCalendar: View {
-    @ObservedObject var viewModel: CalendarViewModel
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            MiniCalendarView(viewModel: viewModel)
-                .layoutPriority(1)
-
-
-                HStack(alignment: .top, spacing: 6) {
-                    Button {
-                        viewModel.moveToPreviousPeriod()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .buttonStyle(.plain)
-
-                    Button("Сегодня") {
-                        viewModel.moveToToday()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Button {
-                        viewModel.moveToNextPeriod()
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .fixedSize()
-
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
+        lastPushedEvent = updated
+        onChange(updated)
     }
 }

@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct CalendarItem: Identifiable, Codable, Equatable {
+struct CalendarItem: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var name: String
     var color: EventColor
@@ -10,6 +10,10 @@ struct CalendarItem: Identifiable, Codable, Equatable {
     var externalId: String?
     var isWritable: Bool
     var syncToken: String?
+    /// Конец окна первичной выборки (для провайдеров с ограниченным full-sync).
+    /// Когда окно почти закончилось, `syncToken` сбрасывается и делается новая
+    /// полная выборка с новым окном.
+    var syncWindowEnd: Date?
 
     init(
         id: UUID = UUID(),
@@ -20,7 +24,8 @@ struct CalendarItem: Identifiable, Codable, Equatable {
         externalProvider: ProviderID? = nil,
         externalId: String? = nil,
         isWritable: Bool = true,
-        syncToken: String? = nil
+        syncToken: String? = nil,
+        syncWindowEnd: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -31,5 +36,6 @@ struct CalendarItem: Identifiable, Codable, Equatable {
         self.externalId = externalId
         self.isWritable = isWritable
         self.syncToken = syncToken
+        self.syncWindowEnd = syncWindowEnd
     }
 }

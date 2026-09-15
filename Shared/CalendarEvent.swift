@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct CalendarEvent: Identifiable, Codable, Equatable {
+struct CalendarEvent: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var title: String
     var startDate: Date
@@ -55,12 +55,12 @@ struct CalendarEvent: Identifiable, Codable, Equatable {
     }
 }
 
-enum EventSyncState: String, Codable {
+enum EventSyncState: String, Codable, Sendable {
     case clean
     case pendingUpload
 }
 
-struct PendingEventDeletion: Identifiable, Codable, Equatable {
+struct PendingEventDeletion: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     let remoteRef: RemoteEventRef
     let queuedAt: Date
@@ -74,7 +74,7 @@ struct PendingEventDeletion: Identifiable, Codable, Equatable {
     }
 }
 
-enum EventColor: String, Codable, CaseIterable {
+enum EventColor: String, Codable, CaseIterable, Sendable {
     case red = "red"
     case orange = "orange"
     case yellow = "yellow"

@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct YearView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 28, alignment: .top), count: 3)
 
@@ -54,16 +54,11 @@ struct YearView: View {
 
 struct MiniMonthView: View {
     let month: Date
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
 
-    private var weekDays: [String] {
-        let calendar = Calendar.current
-        let symbols = calendar.veryShortStandaloneWeekdaySymbols
-        let firstWeekdayIndex = max(0, calendar.firstWeekday - 1)
-        return Array(symbols[firstWeekdayIndex...] + symbols[..<firstWeekdayIndex])
-    }
+    private let weekDays = Calendar.current.orderedWeekdaySymbols(.veryShort)
 
     var weeks: [[Date]] {
         month.getAllWeeksInMonth()
@@ -116,7 +111,7 @@ struct MiniMonthView: View {
 
 struct MiniDayCellWithPopover: View {
     let date: Date
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
     let isCurrentMonth: Bool
 
     @State private var showingPopover = false
@@ -129,8 +124,8 @@ struct MiniDayCellWithPopover: View {
         Calendar.current.isDate(date, equalTo: viewModel.selectedDate, toGranularity: .day)
     }
 
-    private var dayEvents: [CalendarEvent] {
-        viewModel.events(for: date)
+    private var hasEvents: Bool {
+        viewModel.hasEvents(on: date)
     }
 
     var body: some View {
@@ -146,7 +141,7 @@ struct MiniDayCellWithPopover: View {
                 .padding(.top, 1)
 
             Circle()
-                .fill(dayEvents.isEmpty ? Color.clear : eventIndicatorColor)
+                .fill(hasEvents ? eventIndicatorColor : Color.clear)
                 .frame(width: 3.5, height: 3.5)
                 .padding(.top, 2)
         }
@@ -155,14 +150,14 @@ struct MiniDayCellWithPopover: View {
         .onTapGesture {
             viewModel.selectedDate = date
             viewModel.clearSelection()
-            if !dayEvents.isEmpty {
+            if hasEvents {
                 showingPopover = true
             }
         }
         .popover(isPresented: $showingPopover, arrowEdge: .trailing) {
             DayEventsPopover(
                 date: date,
-                events: dayEvents,
+                events: viewModel.events(for: date),
                 viewModel: viewModel
             )
         }
@@ -202,7 +197,7 @@ struct MiniDayCellWithPopover: View {
 struct DayEventsPopover: View {
     let date: Date
     let events: [CalendarEvent]
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
 
     /// Заголовок даты: "5 февраля, четверг"
     private var dateTitle: String {

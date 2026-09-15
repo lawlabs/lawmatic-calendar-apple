@@ -2,20 +2,16 @@
 import SwiftUI
 
 struct MacYearView: View {
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
 
-    let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 3)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 3)
 
-    var monthsInYear: [Date] {
+    private var monthsInYear: [Date] {
         let calendar = Calendar.current
         let year = calendar.component(.year, from: viewModel.selectedDate)
 
         return (1...12).compactMap { month in
-            var components = DateComponents()
-            components.year = year
-            components.month = month
-            components.day = 1
-            return calendar.date(from: components)
+            calendar.date(from: DateComponents(year: year, month: month, day: 1))
         }
     }
 
@@ -36,16 +32,16 @@ struct MacYearView: View {
 
 struct MacMiniMonthView: View {
     let month: Date
-    @ObservedObject var viewModel: CalendarViewModel
+    var viewModel: CalendarViewModel
 
-    let weekDays = ["В", "П", "В", "С", "Ч", "П", "С"]
-    let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
+    private let weekDays = Calendar.current.orderedWeekdaySymbols(.veryShort)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
 
-    var weeks: [[Date]] {
+    private var weeks: [[Date]] {
         month.getAllWeeksInMonth()
     }
 
-    var monthName: String {
+    private var monthName: String {
         month.monthYearString().components(separatedBy: " ").first ?? ""
     }
 
@@ -70,10 +66,26 @@ struct MacMiniMonthView: View {
                         Text("")
                             .frame(width: 24, height: 24)
                     } else {
-                        MacMiniDayCellWithPopover(
+                        MacMiniDayCell(
                             date: date,
-                            viewModel: viewModel,
-                            isCurrentMonth: Calendar.current.isDate(date, equalTo: month, toGranularity: .month)
+                            isToday: Calendar.current.isDateInToday(date),
+                            isCurrentMonth: Calendar.current.isDate(date, equalTo: month, toGranularity: .month),
+                            hasEvents: viewModel.hasEvents(on: date),
+                            onTap: {
+                                viewModel.selectedDate = date
+                                viewModel.clearSelection()
+                            },
+                            onDoubleTap: {
+                                viewModel.selectedDate = date
+                                viewModel.viewMode = .day
+                            },
+                            popover: {
+                                DayEventsPopover(
+                                    date: date,
+                                    events: viewModel.events(for: date),
+                                    viewModel: viewModel
+                                )
+                            }
                         )
                     }
                 }
@@ -85,20 +97,18 @@ struct MacMiniMonthView: View {
     }
 }
 
-struct MacMiniDayCellWithPopover: View {
+/// Ячейка дня в годовом виде. Клик выбирает день и, если есть события,
+/// показывает их список; двойной клик открывает дневной вид.
+private struct MacMiniDayCell<Popover: View>: View {
     let date: Date
-    @ObservedObject var viewModel: CalendarViewModel
+    let isToday: Bool
     let isCurrentMonth: Bool
+    let hasEvents: Bool
+    let onTap: () -> Void
+    let onDoubleTap: () -> Void
+    @ViewBuilder let popover: () -> Popover
 
     @State private var showingPopover = false
-
-    private var isToday: Bool {
-        Calendar.current.isDateInToday(date)
-    }
-
-    private var dayEvents: [CalendarEvent] {
-        viewModel.events(for: date)
-    }
 
     var body: some View {
         VStack(spacing: 2) {
@@ -112,27 +122,25 @@ struct MacMiniDayCellWithPopover: View {
                         .fill(isToday ? Color.red : Color.clear)
                 )
 
-            if !dayEvents.isEmpty {
-                Circle()
-                    .fill(Color.blue)
-                    .frame(width: 4, height: 4)
-            }
+            Circle()
+                .fill(hasEvents ? Color.blue : Color.clear)
+                .frame(width: 4, height: 4)
         }
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            showingPopover = false
+            onDoubleTap()
+        }
         .onTapGesture {
-            viewModel.selectedDate = date
-            viewModel.clearSelection()
-            if !dayEvents.isEmpty {
+            onTap()
+            if hasEvents {
                 showingPopover = true
             }
         }
-        .popover(isPresented: $showingPopover, arrowEdge: .trailing) {
-            DayEventsPopover(
-                date: date,
-                events: dayEvents,
-                viewModel: viewModel
-            )
-        }
+        .popover(isPresented: $showingPopover, arrowEdge: .trailing, content: popover)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(hasEvents ? "\(date.dayString()), есть события" : date.dayString())
+        .accessibilityAddTraits(.isButton)
     }
 }
 #endif

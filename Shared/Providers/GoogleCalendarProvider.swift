@@ -249,8 +249,19 @@ actor GoogleCalendarAPIClient {
             URLQueryItem(name: "showDeleted", value: "true"),
             URLQueryItem(name: "singleEvents", value: "true"),
         ]
+        // Первичная выборка ограничена окном: с singleEvents=true Google
+        // разворачивает повторяющиеся события в экземпляры, и без границ
+        // «живой» календарь отдаёт десятки тысяч записей. Полученный
+        // syncToken сохраняет это окно для инкрементов (timeMin/timeMax
+        // вместе с syncToken передавать нельзя).
+        var coveredRange: ClosedRange<Date>?
         if let syncToken = syncRequest.syncToken {
             query.append(URLQueryItem(name: "syncToken", value: syncToken))
+        } else {
+            let window = syncRequest.dateRange ?? Self.defaultSyncWindow
+            coveredRange = window
+            query.append(URLQueryItem(name: "timeMin", value: Self.isoPlain.string(from: window.lowerBound)))
+            query.append(URLQueryItem(name: "timeMax", value: Self.isoPlain.string(from: window.upperBound)))
         }
         if let pageToken = syncRequest.pageToken {
             query.append(URLQueryItem(name: "pageToken", value: pageToken))
@@ -298,8 +309,18 @@ actor GoogleCalendarAPIClient {
             deletes: deletes,
             nextPageToken: page.nextPageToken,
             nextSyncToken: page.nextSyncToken,
-            kind: syncRequest.syncToken == nil ? .fullSnapshot : .incremental
+            kind: syncRequest.syncToken == nil ? .fullSnapshot : .incremental,
+            coveredDateRange: coveredRange
         )
+    }
+
+    /// Окно первичной выборки: год назад и три года вперёд.
+    nonisolated static var defaultSyncWindow: ClosedRange<Date> {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = Date()
+        let start = calendar.date(byAdding: .year, value: -1, to: now) ?? now.addingTimeInterval(-365 * 86_400)
+        let end = calendar.date(byAdding: .year, value: 3, to: now) ?? now.addingTimeInterval(3 * 365 * 86_400)
+        return start ... end
     }
 
     func upsert(event: CalendarEvent, calendarID: String, accessToken: String) async throws -> GoogleEvent {

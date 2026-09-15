@@ -56,38 +56,45 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
 
     func fetchEvents(calendar: RemoteCalendar, request: SyncRequest) async throws -> SyncBatch {
         try ensureAuthorized()
-        guard let eventCalendar = eventStore.calendar(withIdentifier: calendar.id) else {
+        guard eventStore.calendar(withIdentifier: calendar.id) != nil else {
             throw ProviderError.remoteCalendarNotFound(remoteID: calendar.id)
         }
         let range = request.dateRange ?? Self.defaultSyncRange
-        let predicate = eventStore.predicateForEvents(
-            withStart: range.lowerBound,
-            end: range.upperBound,
-            calendars: [eventCalendar]
-        )
-        let events = eventStore.events(matching: predicate)
-        let upserts = events.compactMap { event -> ParsedRemoteEvent? in
-            guard let eventID = event.eventIdentifier,
-                  let eventStart = event.startDate,
-                  let eventEnd = event.endDate
-            else { return nil }
-            let localEnd = event.isAllDay ? eventEnd.addingTimeInterval(-1) : eventEnd
-            return ParsedRemoteEvent(
-                remoteRef: RemoteEventRef(
-                    providerID: id,
-                    remoteCalendarID: calendar.id,
-                    remoteEventID: eventID
-                ),
-                title: event.title ?? "Без названия",
-                start: eventStart,
-                end: localEnd,
-                isAllDay: event.isAllDay,
-                notes: event.notes ?? "",
-                location: event.location ?? "",
-                updatedAt: event.lastModifiedDate ?? .distantPast,
-                etag: nil
+        let providerID = id
+        let remoteCalendarID = calendar.id
+        let eventStore = self.eventStore
+        // Выборка за несколько лет может занимать сотни миллисекунд —
+        // EventKit потокобезопасен для чтения, поэтому уходим с main actor.
+        let upserts: [ParsedRemoteEvent] = await Task.detached(priority: .userInitiated) {
+            guard let eventCalendar = eventStore.calendar(withIdentifier: remoteCalendarID) else { return [] }
+            let predicate = eventStore.predicateForEvents(
+                withStart: range.lowerBound,
+                end: range.upperBound,
+                calendars: [eventCalendar]
             )
-        }
+            return eventStore.events(matching: predicate).compactMap { event -> ParsedRemoteEvent? in
+                guard let eventID = event.eventIdentifier,
+                      let eventStart = event.startDate,
+                      let eventEnd = event.endDate
+                else { return nil }
+                let localEnd = event.isAllDay ? eventEnd.addingTimeInterval(-1) : eventEnd
+                return ParsedRemoteEvent(
+                    remoteRef: RemoteEventRef(
+                        providerID: providerID,
+                        remoteCalendarID: remoteCalendarID,
+                        remoteEventID: eventID
+                    ),
+                    title: event.title ?? "Без названия",
+                    start: eventStart,
+                    end: localEnd,
+                    isAllDay: event.isAllDay,
+                    notes: event.notes ?? "",
+                    location: event.location ?? "",
+                    updatedAt: event.lastModifiedDate ?? .distantPast,
+                    etag: nil
+                )
+            }
+        }.value
         status = .signedIn(accountLabel: "Системные календари")
         return SyncBatch(
             upserts: upserts,

@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		C0D100000000000000000021 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = C0D100000000000000000011 /* GoogleSignIn */; };
 		C0D100000000000000000022 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = C0D100000000000000000012 /* GoogleSignIn */; };
+		C0D100000000000000000023 /* Kalends in Frameworks */ = {isa = PBXBuildFile; productRef = C0D100000000000000000013 /* Kalends */; };
+		C0D100000000000000000024 /* Kalends in Frameworks */ = {isa = PBXBuildFile; productRef = C0D100000000000000000014 /* Kalends */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +58,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C0D100000000000000000021 /* GoogleSignIn in Frameworks */,
+				C0D100000000000000000023 /* Kalends in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -64,6 +67,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C0D100000000000000000022 /* GoogleSignIn in Frameworks */,
+				C0D100000000000000000024 /* Kalends in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -120,6 +124,7 @@
 			name = LawMaticCalendar;
 			packageProductDependencies = (
 				C0D100000000000000000011 /* GoogleSignIn */,
+				C0D100000000000000000013 /* Kalends */,
 			);
 			productName = CalendarTest45;
 			productReference = A50350A32E8C1878009F815B /* LawMaticCalendar.app */;
@@ -145,6 +150,7 @@
 			name = "LawMaticCalendar-iOS";
 			packageProductDependencies = (
 				C0D100000000000000000012 /* GoogleSignIn */,
+				C0D100000000000000000014 /* Kalends */,
 			);
 			productName = "LawMaticCalendar-iOS";
 			productReference = A5D2F4812F94F82B002A800C /* LawMaticCalendar-iOS.app */;
@@ -206,6 +212,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				C0D100000000000000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				C0D100000000000000000002 /* XCLocalSwiftPackageReference "../kalends-swiftui" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A50350A42E8C1878009F815B /* Products */;
@@ -674,6 +681,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		C0D100000000000000000002 /* XCLocalSwiftPackageReference "../kalends-swiftui" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../kalends-swiftui";
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		C0D100000000000000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -695,6 +709,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C0D100000000000000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignIn;
+		};
+		C0D100000000000000000013 /* Kalends */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0D100000000000000000002 /* XCLocalSwiftPackageReference "../kalends-swiftui" */;
+			productName = Kalends;
+		};
+		C0D100000000000000000014 /* Kalends */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0D100000000000000000002 /* XCLocalSwiftPackageReference "../kalends-swiftui" */;
+			productName = Kalends;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

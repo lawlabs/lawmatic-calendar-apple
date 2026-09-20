@@ -14,6 +14,10 @@ struct LawMaticCalendar_iOSApp: App {
         WindowGroup {
             ContentView()
                 .onOpenURL { _ = ProviderRegistry.shared.google.handleOpenURL($0) }
+                // Интерфейс приложения русскоязычный; календарь Kalends берёт
+                // язык подписей и формат дат из этой локали.
+                .environment(\.locale, Locale(identifier: "ru_RU"))
+                .preferredColorScheme(DemoMode.colorScheme)
         }
     }
 }

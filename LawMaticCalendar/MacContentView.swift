@@ -241,18 +241,8 @@ struct MacContentView: View {
         }
     }
 
-    @ViewBuilder
     private var contentView: some View {
-        switch viewModel.viewMode {
-        case .day:
-            MacDayView(viewModel: viewModel)
-        case .week:
-            WeekView(viewModel: viewModel)
-        case .month:
-            MacMonthView(viewModel: viewModel)
-        case .year:
-            MacYearView(viewModel: viewModel)
-        }
+        CalendarWorkspaceView(viewModel: viewModel)
     }
 }
 

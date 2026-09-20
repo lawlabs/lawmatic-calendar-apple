@@ -12,7 +12,7 @@ struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.undoManager) private var undoManager
-    @State private var viewModel = CalendarViewModel()
+    @State private var viewModel = DemoMode.makeAppViewModel()
     @State private var isSettingsPresented = false
 
     private var isCompactLayout: Bool {
@@ -274,18 +274,8 @@ private struct IOSCalendarWorkspaceView: View {
         .pickerStyle(.segmented)
     }
 
-    @ViewBuilder
     private var contentView: some View {
-        switch viewModel.viewMode {
-        case .day:
-            DayView(viewModel: viewModel)
-        case .week:
-            WeekView(viewModel: viewModel)
-        case .month:
-            MonthView(viewModel: viewModel)
-        case .year:
-            YearView(viewModel: viewModel)
-        }
+        CalendarWorkspaceView(viewModel: viewModel)
     }
 
     private var navigationTitle: String {

@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: lawmatic-calendar-apple
+      # The app depends on Kalends as a local package in the sibling folder.
+      - uses: actions/checkout@v4
+        with:
+          repository: lawlabs/kalends-swiftui
+          path: kalends-swiftui
+      - name: Xcode version
+        run: xcodebuild -version
+      - name: Build and test (macOS)
+        working-directory: lawmatic-calendar-apple
+        run: >
+          xcodebuild test -quiet
+          -scheme LawMaticCalendar
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO
+      - name: Build (iOS Simulator)
+        working-directory: lawmatic-calendar-apple
+        run: >
+          xcodebuild build -quiet
+          -scheme LawMaticCalendar-iOS
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO

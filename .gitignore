@@ -47,3 +47,7 @@ Local.xcconfig
 
 # Local reference projects, not part of the app target
 Другие проекты/
+
+# Internal working notes, kept locally
+Plans.md
+TODO.md

@@ -18,7 +18,7 @@ struct MacContentView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             CalendarSidebarView(viewModel: viewModel)
-                .frame(minWidth: 200)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 260, max: 400)
         } detail: {
             VStack(spacing: 0) {
                 contentView
@@ -34,6 +34,14 @@ struct MacContentView: View {
             EventInspectorView(viewModel: viewModel)
                 .inspectorColumnWidth(min: 280, ideal: 320, max: 400)
         }
+        // Минимум окна = сайдбар (max 400) + инспектор (max 400) + 320 pt, которые
+        // инспектор требует для основного содержимого. Если разделителем сайдбара
+        // сжать колонку с инспектором ниже этого минимума, NavigationSplitView на
+        // macOS 26+ уходит в бесконечный цикл Auto Layout и падает с
+        // NSGenericException «…more Update Constraints in Window passes than there
+        // are views in the window». Ограничение сайдбара плюс минимум окна делают
+        // такое положение разделителя недостижимым.
+        .frame(minWidth: 1120)
         .alert(item: $viewModel.storageError) { error in
             Alert(
                 title: Text(error.title),

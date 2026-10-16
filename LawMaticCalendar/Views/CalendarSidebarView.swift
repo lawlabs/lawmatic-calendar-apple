@@ -66,6 +66,7 @@ struct CalendarSidebarView: View {
 
             Section {
                 MiniCalendarView(selectedDate: $viewModel.selectedDate)
+                    .kalendsDays(viewModel.kalendsDayConfiguration)
             }
         }
         .listStyle(.sidebar)

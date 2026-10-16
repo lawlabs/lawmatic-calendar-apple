@@ -1,4 +1,5 @@
 import Foundation
+import Kalends
 import Observation
 import SwiftUI
 
@@ -14,6 +15,24 @@ final class CalendarViewModel {
     var selectedDate: Date = Date()
     var viewMode: ViewMode = .day
     var inspectorState: EventInspectorState?
+
+    // Параметры вида действуют в текущем сеансе, как в Windows-версии.
+    var showWeekends = true
+    var highlightWeekends = true
+    var highlightHolidays = true
+    var showWorkingDayMarkers = true
+
+    /// Данные производственного календаря принадлежат приложению, а не сетке.
+    /// Без записи для даты Kalends использует обычные субботу и воскресенье.
+    private var dayInfoByDate: [Date: KalendsDayInfo] = [:]
+
+    func dayInfo(on date: Date) -> KalendsDayInfo? {
+        dayInfoByDate[Calendar.current.startOfDay(for: date)]
+    }
+
+    func setDayInfo(_ info: KalendsDayInfo?, for date: Date) {
+        dayInfoByDate[Calendar.current.startOfDay(for: date)] = info
+    }
 
     let repository: EventRepository
     let sync: CalendarSyncCoordinator

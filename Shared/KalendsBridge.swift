@@ -39,6 +39,16 @@ extension ViewMode {
 }
 
 extension CalendarViewModel: KalendsDataSource {
+    var kalendsDayConfiguration: KalendsDayConfiguration {
+        KalendsDayConfiguration(
+            showWeekends: showWeekends,
+            highlightWeekends: highlightWeekends,
+            highlightHolidays: highlightHolidays,
+            showWorkingDayMarkers: showWorkingDayMarkers,
+            dayInfoProvider: { [weak self] day in self?.dayInfo(on: day) }
+        )
+    }
+
     func events(on day: Date) -> [CalendarDisplayEvent] {
         repository.events(for: day).map { event in
             CalendarDisplayEvent(event, color: repository.color(for: event), isReadOnly: !canEdit(event))
@@ -91,5 +101,6 @@ struct CalendarWorkspaceView: View {
             selectedEventID: viewModel.selectedEventId,
             actions: viewModel.kalendsActions
         )
+        .kalendsDays(viewModel.kalendsDayConfiguration)
     }
 }

@@ -239,6 +239,10 @@ private struct IOSCalendarWorkspaceView: View {
                 }
 
                 Menu {
+                    Section("Вид календаря") {
+                        CalendarViewOptions(viewModel: viewModel)
+                    }
+
                     Button {
                         Task { await viewModel.syncAllProviders() }
                     } label: {

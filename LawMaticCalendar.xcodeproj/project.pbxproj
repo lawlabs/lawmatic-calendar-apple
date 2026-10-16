@@ -11,6 +11,7 @@
 		C0D100000000000000000022 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = C0D100000000000000000012 /* GoogleSignIn */; };
 		C0D100000000000000000023 /* Kalends in Frameworks */ = {isa = PBXBuildFile; productRef = C0D100000000000000000013 /* Kalends */; };
 		C0D100000000000000000024 /* Kalends in Frameworks */ = {isa = PBXBuildFile; productRef = C0D100000000000000000014 /* Kalends */; };
+		C0D100000000000000000025 /* Kalends in Frameworks */ = {isa = PBXBuildFile; productRef = C0D100000000000000000015 /* Kalends */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +76,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0D100000000000000000025 /* Kalends in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -174,6 +176,7 @@
 			);
 			name = LawMaticCalendarTests;
 			packageProductDependencies = (
+				C0D100000000000000000015 /* Kalends */,
 			);
 			productName = LawMaticCalendarTests;
 			productReference = B50350A32E8C1878009F815B /* LawMaticCalendarTests.xctest */;
@@ -716,6 +719,11 @@
 			productName = Kalends;
 		};
 		C0D100000000000000000014 /* Kalends */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0D100000000000000000002 /* XCLocalSwiftPackageReference "../kalends-swiftui" */;
+			productName = Kalends;
+		};
+		C0D100000000000000000015 /* Kalends */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C0D100000000000000000002 /* XCLocalSwiftPackageReference "../kalends-swiftui" */;
 			productName = Kalends;

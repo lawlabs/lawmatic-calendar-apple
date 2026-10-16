@@ -1,4 +1,5 @@
 import Foundation
+import Kalends
 import SwiftUI
 
 /// Демо-режим для показа и скриншотов: запуск с аргументами
@@ -45,6 +46,11 @@ enum DemoMode {
         )
         viewModel.selectedDate = referenceDate
         viewModel.viewMode = viewMode
+        if UserDefaults.standard.bool(forKey: "demoDayKinds") {
+            for (date, info) in CalendarSeedData.demoDayInfo(around: referenceDate) {
+                viewModel.setDayInfo(info, for: date)
+            }
+        }
         return viewModel
     }
 
@@ -63,6 +69,25 @@ private final class NoProviders: CalendarProviderResolving {
 }
 
 extension CalendarSeedData {
+    /// Вымышленные статусы для проверки оформления, только с `-demoDayKinds 1`.
+    /// Это не производственный календарь и не сведения о настоящих праздниках.
+    static func demoDayInfo(around date: Date, calendar: Calendar = .current) -> [Date: KalendsDayInfo] {
+        var mondayFirst = calendar
+        mondayFirst.firstWeekday = 2
+        let week = mondayFirst.date(from: mondayFirst.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date))
+            ?? calendar.startOfDay(for: date)
+        let examples: [(Int, KalendsDayInfo)] = [
+            (0, KalendsDayInfo(kind: .holiday, description: "Демо: праздничный день")),
+            (1, KalendsDayInfo(kind: .transferredDayOff, description: "Демо: перенесённый выходной")),
+            (3, KalendsDayInfo(isShortened: true, description: "Демо: сокращённый рабочий день")),
+            (5, KalendsDayInfo(kind: .transferredWorking, isShortened: true,
+                               description: "Демо: рабочая суббота по переносу, сокращённый день")),
+        ]
+        return Dictionary(uniqueKeysWithValues: examples.compactMap { offset, info in
+            calendar.date(byAdding: .day, value: offset, to: week).map { ($0, info) }
+        })
+    }
+
     /// Та же неделя, что в демо-данных LawMatic Calendar для Windows, по-русски.
     static func demoSnapshot(around date: Date, calendar: Calendar = .current) -> CalendarStoreSnapshot {
         let calendars = [

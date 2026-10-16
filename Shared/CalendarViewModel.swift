@@ -22,16 +22,24 @@ final class CalendarViewModel {
     var highlightHolidays = true
     var showWorkingDayMarkers = true
 
-    /// Данные производственного календаря принадлежат приложению, а не сетке.
-    /// Без записи для даты Kalends использует обычные субботу и воскресенье.
+    /// Уточнения поверх производственного календаря. Снятие уточнения возвращает
+    /// справочник, а для года без снимка Kalends оставляет субботу и воскресенье.
     private var dayInfoByDate: [Date: KalendsDayInfo] = [:]
 
     func dayInfo(on date: Date) -> KalendsDayInfo? {
-        dayInfoByDate[Calendar.current.startOfDay(for: date)]
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: date)
+        if let override = dayInfoByDate[day] { return override }
+        return ProductionCalendar.current.info(on: day, calendar: calendar)
     }
 
     func setDayInfo(_ info: KalendsDayInfo?, for date: Date) {
         dayInfoByDate[Calendar.current.startOfDay(for: date)] = info
+    }
+
+    /// Пояснение над сеткой, когда видимый год не вошёл в загруженные снимки.
+    var productionCalendarNotice: String? {
+        ProductionCalendar.current.notice(for: visibleYears())
     }
 
     let repository: EventRepository
@@ -516,5 +524,24 @@ final class CalendarViewModel {
         let start = calendar.date(byAdding: .day, value: -14, to: date) ?? date
         let end = calendar.date(byAdding: .day, value: 14, to: date) ?? date
         return start ... end
+    }
+
+    /// Годы, которые реально попадают на сетку, включая соседние дни месяца.
+    private func visibleYears() -> [Int] {
+        let calendar = Calendar.current
+        let range = visibleCalendarDateRange()
+        var dates = [range.lowerBound, range.upperBound]
+        if viewMode == .month,
+           let monthStart = calendar.dateInterval(of: .month, for: selectedDate)?.start {
+            let weekday = calendar.component(.weekday, from: monthStart)
+            let leading = (weekday - calendar.firstWeekday + 7) % 7
+            if let gridStart = calendar.date(byAdding: .day, value: -leading, to: monthStart) {
+                dates.append(gridStart)
+                if let gridEnd = calendar.date(byAdding: .day, value: 41, to: gridStart) {
+                    dates.append(gridEnd)
+                }
+            }
+        }
+        return Set(dates.map { calendar.component(.year, from: $0) }).sorted()
     }
 }

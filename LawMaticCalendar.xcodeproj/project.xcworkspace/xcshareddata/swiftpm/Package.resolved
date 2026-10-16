@@ -1,5 +1,5 @@
 {
-  "originHash" : "68aa00e3cba36db2e0a76f54dbc84d1f079d8aa9a19bfa9fce02d6286bd620b7",
+  "originHash" : "3778e9fe3cbfe4ebad605ec4927ec5c045bbca4f95b69d3491deb6730cc06eed",
   "pins" : [
     {
       "identity" : "app-check",
@@ -62,6 +62,15 @@
       "state" : {
         "revision" : "040d087ac2267d2ddd4cca36c757d1c6a05fdbfe",
         "version" : "101.0.0"
+      }
+    },
+    {
+      "identity" : "kalends-swiftui",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/lawlabs/kalends-swiftui",
+      "state" : {
+        "branch" : "main",
+        "revision" : "cc06752695b61c1803ac917aee20eb3ee2b2b7b4"
       }
     },
     {

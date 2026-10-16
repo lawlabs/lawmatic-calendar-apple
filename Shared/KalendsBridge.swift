@@ -94,13 +94,24 @@ struct CalendarWorkspaceView: View {
     @Bindable var viewModel: CalendarViewModel
 
     var body: some View {
-        KalendsView(
-            mode: viewModel.viewMode.kalendsMode,
-            source: viewModel,
-            selectedDate: $viewModel.selectedDate,
-            selectedEventID: viewModel.selectedEventId,
-            actions: viewModel.kalendsActions
-        )
+        VStack(spacing: 0) {
+            if let notice = viewModel.productionCalendarNotice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .accessibilityIdentifier("ProductionCalendarNotice")
+            }
+            KalendsView(
+                mode: viewModel.viewMode.kalendsMode,
+                source: viewModel,
+                selectedDate: $viewModel.selectedDate,
+                selectedEventID: viewModel.selectedEventId,
+                actions: viewModel.kalendsActions
+            )
+        }
         .kalendsDays(viewModel.kalendsDayConfiguration)
     }
 }

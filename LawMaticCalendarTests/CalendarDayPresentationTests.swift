@@ -30,7 +30,12 @@ final class CalendarDayPresentationTests: XCTestCase {
         let saturday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 19)))
         let afternoon = try XCTUnwrap(calendar.date(bySettingHour: 15, minute: 30, second: 0, of: saturday))
         let configuration = viewModel.kalendsDayConfiguration
-        XCTAssertEqual(configuration.info(for: saturday, calendar: calendar).kind, .weekend)
+        // Снятие уточнения возвращает снимок, какой бы тип ни стоял на эту дату.
+        let fromCatalog = ProductionCalendar.current.info(on: saturday, calendar: calendar)
+        XCTAssertEqual(
+            configuration.info(for: saturday, calendar: calendar).kind,
+            fromCatalog?.kind ?? .weekend
+        )
 
         let workingSaturday = KalendsDayInfo(kind: .transferredWorking, isShortened: true)
         viewModel.setDayInfo(workingSaturday, for: afternoon)
@@ -39,8 +44,11 @@ final class CalendarDayPresentationTests: XCTestCase {
         XCTAssertFalse(configuration.info(for: afternoon, calendar: calendar).isNonWorking)
 
         viewModel.setDayInfo(nil, for: saturday)
-        XCTAssertNil(viewModel.dayInfo(on: afternoon))
-        XCTAssertEqual(configuration.info(for: afternoon, calendar: calendar).kind, .weekend)
+        XCTAssertEqual(viewModel.dayInfo(on: afternoon)?.kind, fromCatalog?.kind)
+        XCTAssertEqual(
+            configuration.info(for: afternoon, calendar: calendar).kind,
+            fromCatalog?.kind ?? .weekend
+        )
     }
 
     func testDisplayOptionsAndDayInfoLeaveEventsAndStorageAlone() throws {

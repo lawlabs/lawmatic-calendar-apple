@@ -227,12 +227,18 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
         return start ... end
     }
 
-    private static func hexString(from color: CGColor?) -> String? {
-        guard let components = color?.components, components.count >= 3 else { return nil }
-        let red = Int((components[0] * 255).rounded())
-        let green = Int((components[1] * 255).rounded())
-        let blue = Int((components[2] * 255).rounded())
-        return String(format: "#%02X%02X%02X", red, green, blue)
+    /// Цвет календаря в `#RRGGBB` (sRGB). EventKit отдаёт цвет в своём
+    /// пространстве (Display P3, оттенки серого), поэтому сначала переводим
+    /// в sRGB и ограничиваем 0…1 — иначе компоненты вне гаммы дают
+    /// невалидную строку, и календарь становится серым.
+    nonisolated static func hexString(from color: CGColor?) -> String? {
+        guard let color,
+              let sRGB = CGColorSpace(name: CGColorSpace.sRGB),
+              let converted = color.converted(to: sRGB, intent: .defaultIntent, options: nil),
+              let components = converted.components, components.count >= 3
+        else { return nil }
+        let bytes = components.prefix(3).map { Int((min(max($0, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", bytes[0], bytes[1], bytes[2])
     }
 
     private enum Keys {

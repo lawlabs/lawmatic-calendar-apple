@@ -156,35 +156,43 @@ enum EventColor: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// Цвет палитры для цвета календаря провайдера (`#RRGGBB`).
+    ///
+    /// Палитра пастельная, а календари Apple и Google насыщенные, поэтому
+    /// сравнивается оттенок, а не расстояние в RGB: по RGB насыщенный
+    /// фиолетовый ближе к серому, а зелёный — к коричневому. Почти
+    /// бесцветный — серый, тёмный оранжевый — коричневый.
     static func nearest(to hex: String?, fallback: EventColor) -> EventColor {
         guard let hex else { return fallback }
         let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         guard cleaned.count == 6, let value = UInt64(cleaned, radix: 16) else { return fallback }
-        let rgb = (
-            Double((value >> 16) & 0xff) / 255,
-            Double((value >> 8) & 0xff) / 255,
-            Double(value & 0xff) / 255
-        )
-        let palette: [(EventColor, (Double, Double, Double))] = [
-            (.red, (0.95, 0.6, 0.6)), (.orange, (0.95, 0.75, 0.5)),
-            (.yellow, (0.95, 0.9, 0.6)), (.green, (0.7, 0.9, 0.7)),
-            (.blue, (0.6, 0.8, 0.95)), (.purple, (0.8, 0.7, 0.95)),
-            (.pink, (0.95, 0.7, 0.85)), (.brown, (0.8, 0.7, 0.6)),
-            (.gray, (0.65, 0.67, 0.7)),
-        ]
-        return palette.min { lhs, rhs in
-            distance(rgb, lhs.1) < distance(rgb, rhs.1)
-        }?.0 ?? fallback
-    }
+        let red = Double((value >> 16) & 0xff) / 255
+        let green = Double((value >> 8) & 0xff) / 255
+        let blue = Double(value & 0xff) / 255
 
-    private static func distance(
-        _ lhs: (Double, Double, Double),
-        _ rhs: (Double, Double, Double)
-    ) -> Double {
-        let dr = lhs.0 - rhs.0
-        let dg = lhs.1 - rhs.1
-        let db = lhs.2 - rhs.2
-        return dr * dr + dg * dg + db * db
+        let maximum = max(red, green, blue)
+        let chroma = maximum - min(red, green, blue)
+        let saturation = maximum > 0 ? chroma / maximum : 0
+        guard saturation >= 0.15, maximum >= 0.15 else { return .gray }
+
+        var hue: Double
+        switch maximum {
+        case red: hue = 60 * ((green - blue) / chroma)
+        case green: hue = 60 * ((blue - red) / chroma + 2)
+        default: hue = 60 * ((red - green) / chroma + 4)
+        }
+        if hue < 0 { hue += 360 }
+
+        if (12 ..< 50).contains(hue), maximum < 0.7 { return .brown }
+        switch hue {
+        case 12 ..< 45: return .orange
+        case 45 ..< 70: return .yellow
+        case 70 ..< 170: return .green
+        case 170 ..< 250: return .blue
+        case 250 ..< 300: return .purple
+        case 300 ..< 335: return .pink
+        default: return .red
+        }
     }
 }
 

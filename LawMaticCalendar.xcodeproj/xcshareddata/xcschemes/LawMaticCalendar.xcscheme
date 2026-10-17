@@ -16,8 +16,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A50350A22E8C1878009F815B"
-               BuildableName = "LawMaticCalendar.app"
-               BlueprintName = "LawMaticCalendar"
+               BuildableName = "LawMatic Calendar.app"
+               BlueprintName = "LawMatic Calendar"
                ReferencedContainer = "container:LawMaticCalendar.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -71,8 +71,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A50350A22E8C1878009F815B"
-            BuildableName = "LawMaticCalendar.app"
-            BlueprintName = "LawMaticCalendar"
+            BuildableName = "LawMatic Calendar.app"
+            BlueprintName = "LawMatic Calendar"
             ReferencedContainer = "container:LawMaticCalendar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -88,8 +88,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A50350A22E8C1878009F815B"
-            BuildableName = "LawMaticCalendar.app"
-            BlueprintName = "LawMaticCalendar"
+            BuildableName = "LawMatic Calendar.app"
+            BlueprintName = "LawMatic Calendar"
             ReferencedContainer = "container:LawMaticCalendar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

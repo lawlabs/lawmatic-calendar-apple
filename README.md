@@ -42,7 +42,7 @@ Google Calendar требует свой OAuth client ID в `Configuration/*.plis
 Для показа и скриншотов приложение запускается с демонстрационной неделей событий в памяти: провайдеры выключены, на диск ничего не пишется, настоящие данные пользователя не трогаются.
 
 ```bash
-open -n LawMaticCalendar.app --args -demo 1 -date 2026-09-23 -mode week -colorScheme light
+open -n "LawMatic Calendar.app" --args -demo 1 -date 2026-09-23 -mode week -colorScheme light
 ```
 
 `-date` — день, вокруг которого строится неделя; `-mode day|week|month|year`; `-colorScheme dark|light`. То же самое работает в симуляторе через `xcrun simctl launch`.
@@ -50,7 +50,7 @@ open -n LawMaticCalendar.app --args -demo 1 -date 2026-09-23 -mode week -colorSc
 Для проверки типов дней добавьте `-demoDayKinds 1` к запуску с `-demo 1`:
 
 ```bash
-open -n LawMaticCalendar.app --args -demo 1 -demoDayKinds 1 -date 2026-09-23 -mode week
+open -n "LawMatic Calendar.app" --args -demo 1 -demoDayKinds 1 -date 2026-09-23 -mode week
 ```
 
 В этой демонстрационной неделе понедельник — праздник, вторник — перенесённый
@@ -63,7 +63,7 @@ open -n LawMaticCalendar.app --args -demo 1 -demoDayKinds 1 -date 2026-09-23 -mo
 в другое, пять в одной строке.
 
 ```bash
-open -n LawMaticCalendar.app --args -demo 1 -demoBusyDay 1 -date 2026-10-16 -mode day
+open -n "LawMatic Calendar.app" --args -demo 1 -demoBusyDay 1 -date 2026-10-16 -mode day
 ```
 
 ## Выходные и типы дней

@@ -25,7 +25,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		A50350A32E8C1878009F815B /* LawMaticCalendar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LawMaticCalendar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A50350A32E8C1878009F815B /* LawMatic Calendar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "LawMatic Calendar.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A5D2F4812F94F82B002A800C /* LawMaticCalendar-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "LawMaticCalendar-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B50350A32E8C1878009F815B /* LawMaticCalendarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LawMaticCalendarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -97,7 +97,7 @@
 		A50350A42E8C1878009F815B /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A50350A32E8C1878009F815B /* LawMaticCalendar.app */,
+				A50350A32E8C1878009F815B /* LawMatic Calendar.app */,
 				B50350A32E8C1878009F815B /* LawMaticCalendarTests.xctest */,
 				A5D2F4812F94F82B002A800C /* LawMaticCalendar-iOS.app */,
 			);
@@ -107,9 +107,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A50350A22E8C1878009F815B /* LawMaticCalendar */ = {
+		A50350A22E8C1878009F815B /* LawMatic Calendar */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A50350AF2E8C187A009F815B /* Build configuration list for PBXNativeTarget "LawMaticCalendar" */;
+			buildConfigurationList = A50350AF2E8C187A009F815B /* Build configuration list for PBXNativeTarget "LawMatic Calendar" */;
 			buildPhases = (
 				A503509F2E8C1878009F815B /* Sources */,
 				A50350A02E8C1878009F815B /* Frameworks */,
@@ -123,13 +123,13 @@
 				A50350A52E8C1878009F815B /* LawMaticCalendar */,
 				A5D2F48C2F94F9CC002A800C /* Shared */,
 			);
-			name = LawMaticCalendar;
+			name = "LawMatic Calendar";
 			packageProductDependencies = (
 				C0D100000000000000000011 /* GoogleSignIn */,
 				C0D100000000000000000013 /* Kalends */,
 			);
 			productName = CalendarTest45;
-			productReference = A50350A32E8C1878009F815B /* LawMaticCalendar.app */;
+			productReference = A50350A32E8C1878009F815B /* LawMatic Calendar.app */;
 			productType = "com.apple.product-type.application";
 		};
 		A5D2F4802F94F82B002A800C /* LawMaticCalendar-iOS */ = {
@@ -222,7 +222,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A50350A22E8C1878009F815B /* LawMaticCalendar */,
+				A50350A22E8C1878009F815B /* LawMatic Calendar */,
 				B50350A22E8C1878009F815B /* LawMaticCalendarTests */,
 				A5D2F4802F94F82B002A800C /* LawMaticCalendar-iOS */,
 			);
@@ -280,7 +280,7 @@
 /* Begin PBXTargetDependency section */
 		B50350B62E8C1878009F815B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A50350A22E8C1878009F815B /* LawMaticCalendar */;
+			target = A50350A22E8C1878009F815B /* LawMatic Calendar */;
 			targetProxy = B50350B52E8C1878009F815B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -454,6 +454,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 15.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lawmatic.calendar;
+				PRODUCT_MODULE_NAME = LawMaticCalendar;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -513,6 +514,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 15.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lawmatic.calendar;
+				PRODUCT_MODULE_NAME = LawMaticCalendar;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -617,8 +619,8 @@
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LawMaticCalendar.app/Contents/MacOS/LawMaticCalendar";
-				TEST_TARGET_NAME = LawMaticCalendar;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LawMatic Calendar.app/Contents/MacOS/LawMatic Calendar";
+				TEST_TARGET_NAME = "LawMatic Calendar";
 			};
 			name = Debug;
 		};
@@ -642,8 +644,8 @@
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LawMaticCalendar.app/Contents/MacOS/LawMaticCalendar";
-				TEST_TARGET_NAME = LawMaticCalendar;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LawMatic Calendar.app/Contents/MacOS/LawMatic Calendar";
+				TEST_TARGET_NAME = "LawMatic Calendar";
 			};
 			name = Release;
 		};
@@ -659,7 +661,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A50350AF2E8C187A009F815B /* Build configuration list for PBXNativeTarget "LawMaticCalendar" */ = {
+		A50350AF2E8C187A009F815B /* Build configuration list for PBXNativeTarget "LawMatic Calendar" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A50350B02E8C187A009F815B /* Debug */,

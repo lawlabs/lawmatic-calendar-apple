@@ -40,8 +40,12 @@ enum DemoMode {
 
     @MainActor
     static func makeViewModel() -> CalendarViewModel {
+        let snapshot = CalendarSeedData.demoSnapshot(
+            around: referenceDate,
+            busyDay: UserDefaults.standard.bool(forKey: "demoBusyDay")
+        )
         let viewModel = CalendarViewModel(
-            store: InMemoryCalendarStore(snapshot: CalendarSeedData.demoSnapshot(around: referenceDate)),
+            store: InMemoryCalendarStore(snapshot: snapshot),
             providers: NoProviders()
         )
         viewModel.selectedDate = referenceDate
@@ -89,7 +93,11 @@ extension CalendarSeedData {
     }
 
     /// Та же неделя, что в демо-данных LawMatic Calendar для Windows, по-русски.
-    static func demoSnapshot(around date: Date, calendar: Calendar = .current) -> CalendarStoreSnapshot {
+    ///
+    /// `busyDay` (аргумент `-demoBusyDay 1`) заменяет события дня `date`
+    /// плотным днём для проверки раскладки пересечений: события в одно
+    /// время, вложенные одно в другое, пять в одной строке.
+    static func demoSnapshot(around date: Date, busyDay: Bool = false, calendar: Calendar = .current) -> CalendarStoreSnapshot {
         let calendars = [
             CalendarItem(name: "Работа", color: .purple, accountName: "Демо"),
             CalendarItem(name: "Встречи", color: .blue, accountName: "Демо"),
@@ -150,6 +158,32 @@ extension CalendarSeedData {
         add(6, 11, 1, "Время для себя", personal)
         addAllDay(1, 3, "Дизайн-дни", meetings)
         addAllDay(4, 5, "Дедлайн по проекту", important)
+
+        if busyDay {
+            let offset = calendar.dateComponents([.day], from: week, to: calendar.startOfDay(for: date)).day ?? 0
+            events.removeAll { !$0.isAllDay && calendar.isDate($0.startDate, inSameDayAs: date) }
+            add(offset, 8.25, 1, "Заседание в районном суде", important, "Зал 5")
+            add(offset, 9, 1, "Отправить курьера в суд с документами", work)
+            add(offset, 10, 1, "Клиент приедет в офис — уточнить время приезда", meetings)
+            add(offset, 10, 1, "Заявление на выдачу исполнительных листов, жалобу подать в срок", work)
+            add(offset, 11, 1, "Актуализировать таблицу по делам", work)
+            add(offset, 11.5, 1, "Запросить документы по делу 115", important)
+            add(offset, 11.5, 1, "Клиент в офисе в 11:30", meetings)
+            add(offset, 12, 1, "Арбитражный суд: в 12:30 иск ООО «Вектор» к ООО «Альфа»", important, readOnly: true)
+            add(offset, 12, 1, "Беседа в судебном участке перенесена", meetings)
+            add(offset, 12, 1, "Раздать дела на время отпуска", work)
+            add(offset, 13, 1, "Подготовить документы за ноябрь и отправить сторонам", important)
+            add(offset, 13.5, 1, "Забрать детей", personal)
+            add(offset, 14, 1, "Дорога домой", personal)
+            add(offset, 14, 1, "Районный суд", important)
+            add(offset, 15, 1, "Поправить уведомление и устав", work)
+            add(offset, 15, 1, "Отправить претензию поставщику", work)
+            add(offset, 15, 1, "Созвон с экспертом", meetings)
+            add(offset, 15, 1, "Обжалуем? Последний день срока — 29.10", important)
+            add(offset, 15.25, 1, "Назначили заседание?", meetings)
+            add(offset, 18.5, 1, "Согласовать мировое соглашение", important)
+            add(offset, 19.25, 1, "Забрать велосипед из ремонта", personal)
+        }
 
         // Соседние недели — чтобы месяц и год не были пустыми.
         for weekOffset in [-3, -2, -1, 1, 2, 3] {

@@ -29,6 +29,11 @@ protocol CalendarProvider: AnyObject {
     /// Сообщает, что состояние провайдера меняется (включён, доступ), чтобы
     /// координатор пересчитал, в какие календари можно писать.
     var stateChanges: AnyPublisher<Void, Never> { get }
+
+    /// Пользователь разрешил менять события аккаунта из приложения. Смена
+    /// флага сразу обновляет календари аккаунта: от него зависит, какие из
+    /// них доступны для записи.
+    var allowsWriting: Bool { get }
 }
 
 extension CalendarProvider {
@@ -36,6 +41,7 @@ extension CalendarProvider {
     var requiresFullResync: Bool { false }
     func fullResyncDidComplete() {}
     var stateChanges: AnyPublisher<Void, Never> { Empty().eraseToAnyPublisher() }
+    var allowsWriting: Bool { true }
 }
 
 extension CalendarProvider where Self: ObservableObject, Self.ObjectWillChangePublisher == ObservableObjectPublisher {

@@ -24,11 +24,12 @@ struct LawMaticCalendarApp: App {
         }
         .defaultSize(width: 1280, height: 800)
         .commands {
-            CalendarCommands()
+            CalendarCommands(appViewModel: viewModel)
         }
 
         Settings {
             SettingsView(display: viewModel.display)
+                .environment(\.locale, Locale(identifier: "ru_RU"))
         }
     }
 }

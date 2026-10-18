@@ -193,6 +193,17 @@ final class CalendarAccountAvailabilityTests: XCTestCase {
         XCTAssertTrue(viewModel.canEdit(viewModel.events[0]))
     }
 
+    func testChangingWritePermissionSyncsTheAccountAtOnce() async {
+        let provider = MockCalendarProvider()
+        let viewModel = makeViewModel(provider)
+        XCTAssertTrue(provider.fetchRequests.isEmpty)
+
+        provider.allowsWriting = false
+        await waitUntil { !provider.fetchRequests.isEmpty && !viewModel.isSyncing }
+
+        XCTAssertFalse(provider.fetchRequests.isEmpty, "Смена разрешения записи должна сразу обновить календари аккаунта")
+    }
+
     func testUnsentChangesPhraseAgreesWithTheNumber() {
         XCTAssertEqual(CalendarViewModel.unsentChangesPhrase(1), "1 правка не отправлена")
         XCTAssertEqual(CalendarViewModel.unsentChangesPhrase(3), "3 правки не отправлены")

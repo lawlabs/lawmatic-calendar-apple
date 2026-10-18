@@ -126,7 +126,12 @@ struct LastSyncLabel: View {
 
     var body: some View {
         LabeledContent("Последняя синхронизация") {
-            Text(date.map { $0.formatted(.dateTime.day().month().hour().minute()) } ?? "ещё не было")
+            // Text(_:format:) берёт язык из окружения, а не из системы.
+            if let date {
+                Text(date, format: .dateTime.day().month().hour().minute())
+            } else {
+                Text("ещё не было")
+            }
         }
     }
 }

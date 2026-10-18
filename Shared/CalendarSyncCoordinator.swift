@@ -63,6 +63,8 @@ final class CalendarSyncCoordinator {
     /// настройках или потеряли доступ. Их календари только для чтения.
     private(set) var unavailableProviderIDs: Set<ProviderID> = []
     @ObservationIgnored private var providerObservers: [AnyCancellable] = []
+    /// Последнее увиденное разрешение записи каждого аккаунта.
+    @ObservationIgnored private var writePermissions: [ProviderID: Bool] = [:]
 
     @ObservationIgnored private let repository: EventRepository
     @ObservationIgnored private let providers: any CalendarProviderResolving
@@ -83,6 +85,7 @@ final class CalendarSyncCoordinator {
         unavailableProviderIDs = currentUnavailableProviderIDs()
         for providerID in ProviderID.allCases {
             guard let provider = providers.provider(providerID) else { continue }
+            writePermissions[providerID] = provider.allowsWriting
             // objectWillChange приходит до изменения — пересчитываем следующим ходом.
             providerObservers.append(provider.stateChanges.sink { [weak self] in
                 Task { @MainActor in self?.updateProviderAvailability() }
@@ -311,12 +314,24 @@ final class CalendarSyncCoordinator {
 
     /// Аккаунт включили или вернули ему доступ: сразу синхронизировать его,
     /// чтобы накопленные правки ушли без ожидания.
+    ///
+    /// То же, когда в аккаунте разрешили или запретили запись: какие его
+    /// календари доступны для записи, становится известно из синхронизации.
     private func updateProviderAvailability() {
+        var needsSync = Set<ProviderID>()
+        for providerID in ProviderID.allCases {
+            guard let provider = providers.provider(providerID) else { continue }
+            if writePermissions[providerID] != provider.allowsWriting {
+                writePermissions[providerID] = provider.allowsWriting
+                needsSync.insert(providerID)
+            }
+        }
         let unavailable = currentUnavailableProviderIDs()
-        guard unavailable != unavailableProviderIDs else { return }
-        let reconnected = unavailableProviderIDs.subtracting(unavailable)
-        unavailableProviderIDs = unavailable
-        for providerID in reconnected {
+        if unavailable != unavailableProviderIDs {
+            needsSync.formUnion(unavailableProviderIDs.subtracting(unavailable))
+            unavailableProviderIDs = unavailable
+        }
+        for providerID in needsSync {
             Task { await sync(providerID: providerID) }
         }
     }

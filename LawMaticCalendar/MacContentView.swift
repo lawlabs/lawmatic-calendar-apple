@@ -255,6 +255,9 @@ extension FocusedValues {
 }
 
 struct CalendarCommands: Commands {
+    /// Модель приложения: «Обновить календари» относится ко всем окнам и
+    /// работает, даже когда впереди окно настроек.
+    let appViewModel: CalendarViewModel
     @FocusedValue(\.calendarViewModel) private var viewModel
 
     var body: some Commands {
@@ -296,11 +299,10 @@ struct CalendarCommands: Commands {
             Divider()
 
             Button("Обновить календари") {
-                guard let viewModel else { return }
-                Task { await viewModel.syncAllProviders() }
+                Task { await appViewModel.syncAllProviders() }
             }
             .keyboardShortcut("r", modifiers: .command)
-            .disabled(viewModel == nil || viewModel?.isSyncing == true)
+            .disabled(appViewModel.isSyncing)
         }
     }
 }

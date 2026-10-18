@@ -247,6 +247,8 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
         return String(format: "#%02X%02X%02X", bytes[0], bytes[1], bytes[2])
     }
 
+    var allowsWriting: Bool { allowsWriteBack }
+
     private enum Keys {
         static let isEnabled = "appleCalendar.isEnabled"
         static let lastSyncDate = "appleCalendar.lastSyncDate"

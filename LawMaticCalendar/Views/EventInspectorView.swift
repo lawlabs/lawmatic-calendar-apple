@@ -190,7 +190,7 @@ private struct EventEditorForm: View {
 
                 DatePicker(
                     "Начало",
-                    selection: $draft.startDate,
+                    selection: startDateKeepingDuration,
                     displayedComponents: draft.isAllDay ? [.date] : [.date, .hourAndMinute]
                 )
 
@@ -252,6 +252,20 @@ private struct EventEditorForm: View {
             lastPushedEvent = newEvent
             draft = EventDraft(newEvent)
         }
+    }
+
+    /// Как в Календаре Apple: перенос начала двигает и конец, длительность
+    /// сохраняется. Только для правки пользователем — изменения извне
+    /// (перетаскивание, синхронизация) приходят целиком через `event`.
+    private var startDateKeepingDuration: Binding<Date> {
+        Binding(
+            get: { draft.startDate },
+            set: { newStart in
+                let duration = max(draft.endDate.timeIntervalSince(draft.startDate), 0)
+                draft.startDate = newStart
+                draft.endDate = newStart.addingTimeInterval(duration)
+            }
+        )
     }
 
     private func pushDraftIfNeeded() {

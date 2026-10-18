@@ -11,6 +11,7 @@ final class MockCalendarProvider: ObservableObject, CalendarProvider {
     var status: ProviderStatus = .signedIn(accountLabel: "mock")
     /// Публикуется, как у настоящих провайдеров: координатор пересчитывает доступность.
     @Published var isEnabled = true
+    @Published var allowsWriting = true
     var lastSyncDate: Date?
 
     var remoteCalendars: [RemoteCalendar] = []

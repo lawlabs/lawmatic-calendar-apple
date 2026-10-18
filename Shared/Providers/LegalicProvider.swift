@@ -363,6 +363,8 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
         defaults.set(true, forKey: Keys.legacyCleaned)
     }
 
+    var allowsWriting: Bool { allowsWriteBack }
+
     private enum Keys {
         static let keychainService = "com.lawmatic.calendar.legalic"
         static let password = "legalic.password"

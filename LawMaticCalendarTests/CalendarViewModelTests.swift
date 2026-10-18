@@ -476,7 +476,12 @@ final class CalendarViewModelUndoTests: XCTestCase {
         let store = InMemoryCalendarStore(
             snapshot: CalendarStoreSnapshot(calendars: calendars, events: [event])
         )
-        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]), saveDebounce: .seconds(60))
+        // Аккаунт Google подключён: события отключённого аккаунта только для чтения.
+        let viewModel = CalendarViewModel(
+            store: store,
+            providers: MockProviderRegistry([MockCalendarProvider()]),
+            saveDebounce: .seconds(60)
+        )
         let undoManager = UndoManager()
         viewModel.undoManager = undoManager
 

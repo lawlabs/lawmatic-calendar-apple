@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 @MainActor
@@ -24,12 +25,21 @@ protocol CalendarProvider: AnyObject {
     /// Когда аккаунт в последний раз прошёл синхронизацию без ошибок.
     /// Координатор по нему решает, пора ли обновляться, настройки его показывают.
     var lastSyncDate: Date? { get set }
+
+    /// Сообщает, что состояние провайдера меняется (включён, доступ), чтобы
+    /// координатор пересчитал, в какие календари можно писать.
+    var stateChanges: AnyPublisher<Void, Never> { get }
 }
 
 extension CalendarProvider {
     func proposedRemoteEventID(for localEvent: CalendarEvent) -> String? { nil }
     var requiresFullResync: Bool { false }
     func fullResyncDidComplete() {}
+    var stateChanges: AnyPublisher<Void, Never> { Empty().eraseToAnyPublisher() }
+}
+
+extension CalendarProvider where Self: ObservableObject, Self.ObjectWillChangePublisher == ObservableObjectPublisher {
+    var stateChanges: AnyPublisher<Void, Never> { objectWillChange.eraseToAnyPublisher() }
 }
 
 struct RemoteCalendar: Identifiable, Hashable, Sendable {

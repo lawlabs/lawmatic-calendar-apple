@@ -95,6 +95,9 @@ struct CalendarWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let notice = viewModel.unsentChangesNotice {
+                UnsentChangesBanner(text: notice)
+            }
             if let notice = viewModel.productionCalendarNotice {
                 Text(notice)
                     .font(.caption)
@@ -113,5 +116,31 @@ struct CalendarWorkspaceView: View {
             )
         }
         .kalendsDays(viewModel.kalendsDayConfiguration)
+    }
+}
+
+/// Полоса над календарём: правки, которые некуда отправить, пока их аккаунт
+/// выключен или без доступа. Календари такого аккаунта только для чтения.
+private struct UnsentChangesBanner: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(text)
+                .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            #if os(macOS)
+            SettingsLink {
+                Text("Настройки…")
+            }
+            #endif
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("UnsentChangesNotice")
     }
 }

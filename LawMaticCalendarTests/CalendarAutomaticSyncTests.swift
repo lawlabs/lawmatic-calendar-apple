@@ -109,3 +109,97 @@ final class CalendarAutomaticSyncTests: XCTestCase {
         XCTAssertEqual(viewModel.events.first?.syncState, .clean)
     }
 }
+
+/// Аккаунт выключен или без доступа: его календари только для чтения, а
+/// неотправленные правки видны в предупреждении и уходят после подключения.
+@MainActor
+final class CalendarAccountAvailabilityTests: XCTestCase {
+    private let remoteCalendar = RemoteCalendar(id: "primary", providerID: .google, title: "Основной", colorHex: "#4A86E8", isWritable: true)
+    private let googleCalendar = CalendarItem(
+        name: "Основной", color: .blue, accountName: "Mock",
+        externalProvider: .google, externalId: "primary", isWritable: true, syncToken: "token-1"
+    )
+    private let localCalendar = CalendarItem(name: "Личный", color: .green, accountName: "Локально")
+
+    private func makeViewModel(_ provider: MockCalendarProvider, events: [CalendarEvent] = []) -> CalendarViewModel {
+        provider.remoteCalendars = [remoteCalendar]
+        let store = InMemoryCalendarStore(
+            snapshot: CalendarStoreSnapshot(calendars: [googleCalendar, localCalendar], events: events)
+        )
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([provider]))
+        viewModel.sync.uploadDelay = .milliseconds(10)
+        return viewModel
+    }
+
+    private func editedGoogleEvent() -> CalendarEvent {
+        var event = CalendarEvent(title: "Повестки", startDate: Date(), endDate: Date().addingTimeInterval(3600), calendarId: googleCalendar.id)
+        event.externalProvider = .google
+        event.externalCalendarId = "primary"
+        event.externalId = "remote-1"
+        event.syncState = .pendingUpload
+        return event
+    }
+
+    private func waitUntil(timeout: Duration = .seconds(3), _ condition: () -> Bool) async {
+        let deadline = ContinuousClock.now + timeout
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func testDisabledAccountMakesItsCalendarsReadOnly() {
+        let provider = MockCalendarProvider()
+        provider.isEnabled = false
+        let event = editedGoogleEvent()
+        let viewModel = makeViewModel(provider, events: [event])
+
+        XCTAssertFalse(viewModel.canEdit(event))
+        XCTAssertFalse(viewModel.canWrite(to: googleCalendar))
+        XCTAssertTrue(viewModel.canWrite(to: localCalendar))
+        XCTAssertEqual(viewModel.defaultCalendarId, localCalendar.id)
+        XCTAssertEqual(viewModel.writableCalendarIDs, [localCalendar.id])
+    }
+
+    func testUnsentChangesAreAnnouncedWhileTheAccountIsOff() {
+        let provider = MockCalendarProvider()
+        provider.isEnabled = false
+        let viewModel = makeViewModel(provider, events: [editedGoogleEvent()])
+
+        XCTAssertEqual(
+            viewModel.unsentChangesNotice,
+            "Google Calendar не подключён: 1 правка не отправлена. Подключите аккаунт в настройках — изменения уйдут сразу."
+        )
+    }
+
+    func testNoNoticeWhileTheAccountIsOn() {
+        let provider = MockCalendarProvider()
+        let viewModel = makeViewModel(provider, events: [editedGoogleEvent()])
+
+        XCTAssertNil(viewModel.unsentChangesNotice)
+        XCTAssertTrue(viewModel.canEdit(viewModel.events[0]))
+    }
+
+    func testReconnectingTheAccountSendsPendingChanges() async {
+        let provider = MockCalendarProvider()
+        provider.isEnabled = false
+        let viewModel = makeViewModel(provider, events: [editedGoogleEvent()])
+        XCTAssertNotNil(viewModel.unsentChangesNotice)
+
+        provider.isEnabled = true
+        await waitUntil { viewModel.events.first?.syncState == .clean }
+
+        XCTAssertEqual(provider.pushedUpserts.map(\.title), ["Повестки"])
+        XCTAssertNil(viewModel.unsentChangesNotice)
+        XCTAssertTrue(viewModel.canEdit(viewModel.events[0]))
+    }
+
+    func testUnsentChangesPhraseAgreesWithTheNumber() {
+        XCTAssertEqual(CalendarViewModel.unsentChangesPhrase(1), "1 правка не отправлена")
+        XCTAssertEqual(CalendarViewModel.unsentChangesPhrase(3), "3 правки не отправлены")
+        XCTAssertEqual(CalendarViewModel.unsentChangesPhrase(5), "5 правок не отправлено")
+        XCTAssertEqual(CalendarViewModel.unsentChangesPhrase(11), "11 правок не отправлено")
+        XCTAssertEqual(CalendarViewModel.unsentChangesPhrase(21), "21 правка не отправлена")
+        XCTAssertEqual(CalendarViewModel.unsentChangesPhrase(22), "22 правки не отправлены")
+        XCTAssertEqual(CalendarViewModel.unsentChangesPhrase(112), "112 правок не отправлено")
+    }
+}

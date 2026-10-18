@@ -174,7 +174,8 @@ final class CalendarSyncMergerTests: XCTestCase {
         let store = InMemoryCalendarStore(
             snapshot: CalendarStoreSnapshot(calendars: [calendar], events: [event])
         )
-        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
+        // Аккаунт Google подключён: события отключённого аккаунта только для чтения.
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([MockCalendarProvider()]))
 
         viewModel.deleteEvent(event)
 

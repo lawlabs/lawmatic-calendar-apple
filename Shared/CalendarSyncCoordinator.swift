@@ -1,3 +1,4 @@
+import Combine
 import EventKit
 import Foundation
 import Network
@@ -58,6 +59,10 @@ final class CalendarSyncCoordinator {
     /// Черновик нового события в инспекторе: пока его не сохранили, на сервер
     /// он не уходит.
     @ObservationIgnored var draftEventID: UUID?
+    /// Аккаунты, в которые сейчас нельзя отправлять правки: выключены в
+    /// настройках или потеряли доступ. Их календари только для чтения.
+    private(set) var unavailableProviderIDs: Set<ProviderID> = []
+    @ObservationIgnored private var providerObservers: [AnyCancellable] = []
 
     @ObservationIgnored private let repository: EventRepository
     @ObservationIgnored private let providers: any CalendarProviderResolving
@@ -75,6 +80,35 @@ final class CalendarSyncCoordinator {
     init(repository: EventRepository, providers: any CalendarProviderResolving) {
         self.repository = repository
         self.providers = providers
+        unavailableProviderIDs = currentUnavailableProviderIDs()
+        for providerID in ProviderID.allCases {
+            guard let provider = providers.provider(providerID) else { continue }
+            // objectWillChange приходит до изменения — пересчитываем следующим ходом.
+            providerObservers.append(provider.stateChanges.sink { [weak self] in
+                Task { @MainActor in self?.updateProviderAvailability() }
+            })
+        }
+    }
+
+    /// Можно ли сейчас отправлять правки в аккаунт.
+    func isAvailable(_ providerID: ProviderID) -> Bool {
+        !unavailableProviderIDs.contains(providerID)
+    }
+
+    /// Неотправленные правки и удаления по аккаунтам, которые сейчас
+    /// недоступны: им нужно предупреждение, сами они не уйдут.
+    var unsentChangeCounts: [ProviderID: Int] {
+        guard !unavailableProviderIDs.isEmpty else { return [:] }
+        var counts: [ProviderID: Int] = [:]
+        for event in repository.events where event.syncState == .pendingUpload && event.id != draftEventID {
+            if let providerID = event.externalProvider, unavailableProviderIDs.contains(providerID) {
+                counts[providerID, default: 0] += 1
+            }
+        }
+        for deletion in repository.pendingDeletions where unavailableProviderIDs.contains(deletion.remoteRef.providerID) {
+            counts[deletion.remoteRef.providerID, default: 0] += 1
+        }
+        return counts
     }
 
     var isSyncing: Bool { !syncingProviderIDs.isEmpty }
@@ -269,6 +303,22 @@ final class CalendarSyncCoordinator {
             title: messages.count == 1 ? "Ошибка синхронизации" : "Синхронизация завершена с ошибками",
             message: messages.joined(separator: "\n\n")
         )
+    }
+
+    private func currentUnavailableProviderIDs() -> Set<ProviderID> {
+        Set(ProviderID.allCases.filter { !(providers.provider($0)?.isEnabled ?? false) })
+    }
+
+    /// Аккаунт включили или вернули ему доступ: сразу синхронизировать его,
+    /// чтобы накопленные правки ушли без ожидания.
+    private func updateProviderAvailability() {
+        let unavailable = currentUnavailableProviderIDs()
+        guard unavailable != unavailableProviderIDs else { return }
+        let reconnected = unavailableProviderIDs.subtracting(unavailable)
+        unavailableProviderIDs = unavailable
+        for providerID in reconnected {
+            Task { await sync(providerID: providerID) }
+        }
     }
 
     /// Аккаунты, в которые есть что отправить: правки и удаления.

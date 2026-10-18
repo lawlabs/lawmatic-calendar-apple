@@ -22,6 +22,7 @@ struct EventInspectorView: View {
                     }(),
                     isReadOnly: !viewModel.canEdit(event),
                     calendars: viewModel.calendars,
+                    writableCalendarIDs: viewModel.writableCalendarIDs,
                     onChange: { viewModel.applyInspectorChanges($0) },
                     onDelete: { viewModel.deleteEvent(event) }
                 )
@@ -98,6 +99,8 @@ private struct EventEditorForm: View {
     let isCreating: Bool
     let isReadOnly: Bool
     let calendars: [CalendarItem]
+    /// Календари, в которые можно перенести событие сейчас.
+    let writableCalendarIDs: Set<UUID>
     let onChange: (CalendarEvent) -> Void
     let onDelete: () -> Void
 
@@ -118,6 +121,7 @@ private struct EventEditorForm: View {
         isCreating: Bool,
         isReadOnly: Bool,
         calendars: [CalendarItem],
+        writableCalendarIDs: Set<UUID>,
         onChange: @escaping (CalendarEvent) -> Void,
         onDelete: @escaping () -> Void
     ) {
@@ -125,6 +129,7 @@ private struct EventEditorForm: View {
         self.isCreating = isCreating
         self.isReadOnly = isReadOnly
         self.calendars = calendars
+        self.writableCalendarIDs = writableCalendarIDs
         self.onChange = onChange
         self.onDelete = onDelete
         _draft = State(initialValue: EventDraft(event))
@@ -136,7 +141,7 @@ private struct EventEditorForm: View {
     }
 
     private var selectableCalendars: [CalendarItem] {
-        calendars.filter { $0.isWritable || $0.id == draft.calendarId }
+        calendars.filter { writableCalendarIDs.contains($0.id) || $0.id == draft.calendarId }
     }
 
     var body: some View {

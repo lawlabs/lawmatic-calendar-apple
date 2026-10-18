@@ -1,14 +1,16 @@
+import Combine
 import XCTest
 @testable import LawMaticCalendar
 
 // MARK: - Mock-провайдер
 
 @MainActor
-final class MockCalendarProvider: CalendarProvider {
+final class MockCalendarProvider: ObservableObject, CalendarProvider {
     let id: ProviderID
     let displayName: String
     var status: ProviderStatus = .signedIn(accountLabel: "mock")
-    var isEnabled = true
+    /// Публикуется, как у настоящих провайдеров: координатор пересчитывает доступность.
+    @Published var isEnabled = true
     var lastSyncDate: Date?
 
     var remoteCalendars: [RemoteCalendar] = []

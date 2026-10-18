@@ -65,6 +65,32 @@ final class CalendarViewModel {
         ProductionCalendar.current.notice(for: visibleYears())
     }
 
+    /// Предупреждение над сеткой: правки, которые некуда отправить, потому
+    /// что их аккаунт выключен или потерял доступ.
+    var unsentChangesNotice: String? {
+        let counts = sync.unsentChangeCounts
+        guard !counts.isEmpty else { return nil }
+        let providerIDs = ProviderID.allCases.filter { counts[$0] != nil }
+        let names = providerIDs.map(\.displayName)
+            .formatted(.list(type: .and).locale(Locale(identifier: "ru_RU")))
+        let state = providerIDs.count == 1 ? "не подключён" : "не подключены"
+        let total = counts.values.reduce(0, +)
+        return "\(names) \(state): \(Self.unsentChangesPhrase(total)). Подключите аккаунт в настройках — изменения уйдут сразу."
+    }
+
+    /// «1 правка не отправлена», «3 правки не отправлены», «5 правок не отправлено».
+    static func unsentChangesPhrase(_ count: Int) -> String {
+        let lastTwo = count % 100
+        let last = count % 10
+        if last == 1, lastTwo != 11 {
+            return "\(count) правка не отправлена"
+        }
+        if (2 ... 4).contains(last), !(12 ... 14).contains(lastTwo) {
+            return "\(count) правки не отправлены"
+        }
+        return "\(count) правок не отправлено"
+    }
+
     let repository: EventRepository
     let sync: CalendarSyncCoordinator
 
@@ -159,7 +185,20 @@ final class CalendarViewModel {
     }
 
     var defaultCalendarId: UUID {
-        calendars.first(where: \.isWritable)?.id ?? calendars.first?.id ?? UUID()
+        calendars.first(where: canWrite)?.id ?? calendars.first?.id ?? UUID()
+    }
+
+    /// В календарь можно писать: он сам не только для чтения, и его аккаунт
+    /// подключён. Иначе правка осталась бы локальной и никуда не ушла бы.
+    func canWrite(to calendar: CalendarItem) -> Bool {
+        guard calendar.isWritable else { return false }
+        guard let providerID = calendar.externalProvider else { return true }
+        return sync.isAvailable(providerID)
+    }
+
+    /// Календари, в которые сейчас можно писать, — для выбора в инспекторе.
+    var writableCalendarIDs: Set<UUID> {
+        Set(calendars.filter(canWrite).map(\.id))
     }
 
     // MARK: - Выделение
@@ -225,7 +264,7 @@ final class CalendarViewModel {
     // MARK: - CRUD событий
 
     func canEdit(_ event: CalendarEvent) -> Bool {
-        !event.isReadOnly && (calendar(for: event)?.isWritable ?? true)
+        !event.isReadOnly && (calendar(for: event).map(canWrite) ?? true)
     }
 
     func addEvent(_ event: CalendarEvent) {
@@ -442,7 +481,7 @@ final class CalendarViewModel {
             return changed
         }
 
-        guard destination.isWritable else { return previous ?? changed }
+        guard canWrite(to: destination) else { return previous ?? changed }
         let isSameRemoteEvent = previous?.externalProvider == providerID &&
             previous?.externalCalendarId == remoteCalendarID
         if !isSameRemoteEvent, let previous { enqueueDeletionIfNeeded(for: previous) }

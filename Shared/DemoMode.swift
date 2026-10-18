@@ -81,7 +81,7 @@ enum DemoMode {
         if isTestHost {
             return CalendarViewModel(store: InMemoryCalendarStore(), providers: NoProviders())
         }
-        return CalendarViewModel()
+        return CalendarViewModel(display: .persistent())
     }
 }
 

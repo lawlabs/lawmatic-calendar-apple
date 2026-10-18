@@ -44,22 +44,16 @@ struct ContentView: View {
         }
         .sheet(isPresented: $isSettingsPresented) {
             NavigationStack {
-                Group {
-                    if DemoMode.usesUserAccounts {
-                        SettingsView()
-                    } else {
-                        AccountsUnavailableView()
-                    }
-                }
-                .navigationTitle("Настройки")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Готово") {
-                            isSettingsPresented = false
+                SettingsView(display: viewModel.display)
+                    .navigationTitle("Настройки")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Готово") {
+                                isSettingsPresented = false
+                            }
                         }
                     }
-                }
             }
         }
         .alert(item: $viewModel.storageError) { error in
@@ -245,10 +239,6 @@ private struct IOSCalendarWorkspaceView: View {
                 }
 
                 Menu {
-                    Section("Вид календаря") {
-                        CalendarViewOptions(viewModel: viewModel)
-                    }
-
                     Button {
                         Task { await viewModel.syncAllProviders() }
                     } label: {

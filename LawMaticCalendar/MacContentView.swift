@@ -121,13 +121,6 @@ struct MacContentView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            Menu {
-                CalendarViewOptions(viewModel: viewModel)
-            } label: {
-                Label("Вид календаря", systemImage: "slider.horizontal.3")
-            }
-            .help("Вид календаря: выходные, праздники и рабочие дни")
-
             Button {
                 viewModel.createNewEvent(referenceDate: viewModel.selectedDate)
             } label: {

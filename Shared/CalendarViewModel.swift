@@ -16,11 +16,25 @@ final class CalendarViewModel {
     var viewMode: ViewMode = .day
     var inspectorState: EventInspectorState?
 
-    // Параметры вида действуют в текущем сеансе, как в Windows-версии.
-    var showWeekends = true
-    var highlightWeekends = true
-    var highlightHolidays = true
-    var showWorkingDayMarkers = true
+    /// Параметры вида из настроек: выходные и отметки типов дней.
+    let display: CalendarDisplaySettings
+
+    var showWeekends: Bool {
+        get { display.showWeekends }
+        set { display.showWeekends = newValue }
+    }
+    var highlightWeekends: Bool {
+        get { display.highlightWeekends }
+        set { display.highlightWeekends = newValue }
+    }
+    var highlightHolidays: Bool {
+        get { display.highlightHolidays }
+        set { display.highlightHolidays = newValue }
+    }
+    var showWorkingDayMarkers: Bool {
+        get { display.showWorkingDayMarkers }
+        set { display.showWorkingDayMarkers = newValue }
+    }
 
     /// Уточнения поверх производственного календаря. Снятие уточнения возвращает
     /// справочник, а для года без снимка Kalends оставляет субботу и воскресенье.
@@ -59,13 +73,17 @@ final class CalendarViewModel {
     ///   - store: хранилище локальных данных.
     ///   - providers: источник провайдеров синхронизации (в тестах — mock).
     ///   - saveDebounce: задержка отложенного сохранения правок из инспектора.
+    ///   - display: параметры вида; по умолчанию в памяти, сохраняемые
+    ///     передаёт обычный запуск приложения.
     init(
         store: CalendarStore = FileCalendarStore(),
         providers: (any CalendarProviderResolving)? = nil,
-        saveDebounce: Duration = .milliseconds(400)
+        saveDebounce: Duration = .milliseconds(400),
+        display: CalendarDisplaySettings? = nil
     ) {
         let repository = EventRepository(store: store, saveDebounce: saveDebounce)
         self.repository = repository
+        self.display = display ?? CalendarDisplaySettings()
         self.sync = CalendarSyncCoordinator(
             repository: repository,
             providers: providers ?? ProviderRegistry.shared

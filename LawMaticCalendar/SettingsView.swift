@@ -119,6 +119,18 @@ private struct AccountRow: View {
 }
 #endif
 
+/// Когда аккаунт в последний раз синхронизировался — на его вкладке
+/// настроек. Синхронизация идёт сама, поэтому важно видеть, что она жива.
+struct LastSyncLabel: View {
+    let date: Date?
+
+    var body: some View {
+        LabeledContent("Последняя синхронизация") {
+            Text(date.map { $0.formatted(.dateTime.day().month().hour().minute()) } ?? "ещё не было")
+        }
+    }
+}
+
 extension ProviderStatus {
     var shortDescription: String {
         switch self {

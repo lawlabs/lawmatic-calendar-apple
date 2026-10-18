@@ -72,7 +72,7 @@ struct ContentView: View {
         }
         .onAppear {
             viewModel.undoManager = undoManager
-            viewModel.startPeriodicSync()
+            viewModel.startAutomaticSync()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -242,7 +242,7 @@ private struct IOSCalendarWorkspaceView: View {
                     Button {
                         Task { await viewModel.syncAllProviders() }
                     } label: {
-                        Label("Синхронизировать календари", systemImage: "arrow.triangle.2.circlepath")
+                        Label("Обновить календари", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .disabled(viewModel.isSyncing)
 

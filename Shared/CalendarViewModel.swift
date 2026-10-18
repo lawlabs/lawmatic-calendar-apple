@@ -14,7 +14,16 @@ import SwiftUI
 final class CalendarViewModel {
     var selectedDate: Date = Date()
     var viewMode: ViewMode = .day
-    var inspectorState: EventInspectorState?
+    var inspectorState: EventInspectorState? {
+        didSet {
+            // Черновик нового события не уходит на сервер, пока его не сохранили.
+            if case .create(let eventID) = inspectorState {
+                sync.draftEventID = eventID
+            } else {
+                sync.draftEventID = nil
+            }
+        }
+    }
 
     /// Параметры вида из настроек: выходные и отметки типов дней.
     let display: CalendarDisplaySettings
@@ -137,7 +146,7 @@ final class CalendarViewModel {
 
     func syncAllProviders() async { await sync.syncAllProviders() }
     func sync(providerID: ProviderID) async { await sync.sync(providerID: providerID) }
-    func startPeriodicSync() { sync.startPeriodicSync() }
+    func startAutomaticSync() { sync.startAutomaticSync() }
     func handleDidBecomeActive() { sync.handleDidBecomeActive() }
 
     // MARK: - Календари
@@ -222,6 +231,7 @@ final class CalendarViewModel {
     func addEvent(_ event: CalendarEvent) {
         repository.events.append(preparedLocalChange(event, replacing: nil))
         repository.save(.events)
+        sync.scheduleUploadOfLocalChanges()
     }
 
     func updateEvent(_ event: CalendarEvent, persistence: Persistence = .immediate) {
@@ -240,6 +250,7 @@ final class CalendarViewModel {
         case .debounced:
             repository.scheduleSave(.events)
         }
+        sync.scheduleUploadOfLocalChanges()
     }
 
     func deleteEvent(_ event: CalendarEvent) {
@@ -254,6 +265,7 @@ final class CalendarViewModel {
         }
         repository.save(.events)
         repository.save(.pendingDeletions)
+        sync.scheduleUploadOfLocalChanges()
         if !wasDraft {
             registerUndo(actionName: "Удаление события") { viewModel in
                 viewModel.restoreDeletedEvent(stored, at: index ?? viewModel.events.count)
@@ -286,6 +298,7 @@ final class CalendarViewModel {
         }
         repository.events.insert(restored, at: min(max(0, index), repository.events.count))
         repository.save(.events)
+        sync.scheduleUploadOfLocalChanges()
         inspectorState = .view(eventID: restored.id)
         registerUndo(actionName: "Удаление события") { viewModel in
             viewModel.deleteEvent(restored)
@@ -346,6 +359,8 @@ final class CalendarViewModel {
                 repository.events.append(preparedLocalChange(event, replacing: nil))
             }
             repository.save(.events)
+            inspectorState = .view(eventID: event.id)
+            sync.scheduleUploadOfLocalChanges()
             registerUndo(actionName: "Создание события") { viewModel in
                 if let created = viewModel.repository.event(withID: event.id) {
                     viewModel.deleteEvent(created)
@@ -369,6 +384,7 @@ final class CalendarViewModel {
             if !event.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 repository.save(.events)
                 inspectorState = .view(eventID: event.id)
+                sync.scheduleUploadOfLocalChanges()
                 registerUndo(actionName: "Создание события") { viewModel in
                     if let created = viewModel.repository.event(withID: event.id) {
                         viewModel.deleteEvent(created)

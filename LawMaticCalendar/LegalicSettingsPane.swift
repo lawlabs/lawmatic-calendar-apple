@@ -14,6 +14,9 @@ struct LegalicSettingsPane: View {
             Section("LEGALIC") {
                 Toggle("Синхронизировать задачи и сроки", isOn: $provider.isEnabled)
                     .disabled(!isSignedIn)
+                if isSignedIn {
+                    LastSyncLabel(date: provider.lastSyncDate)
+                }
                 Text("Задачи и сроки по делам читаются лентой /sync/v1 по учётной записи LEGALIC. Первый обмен читает всю ленту, дальше — только изменения.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -9,6 +9,7 @@ final class MockCalendarProvider: CalendarProvider {
     let displayName: String
     var status: ProviderStatus = .signedIn(accountLabel: "mock")
     var isEnabled = true
+    var lastSyncDate: Date?
 
     var remoteCalendars: [RemoteCalendar] = []
     /// Страницы ответа по (calendarID, pageToken). `nil` pageToken — первая страница.

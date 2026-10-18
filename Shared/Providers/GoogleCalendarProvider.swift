@@ -14,6 +14,10 @@ final class GoogleCalendarProvider: ObservableObject, CalendarProvider {
     let displayName = "Google Calendar"
 
     @Published private(set) var status: ProviderStatus = .signedOut
+    /// Последняя синхронизация без ошибок; хранится между запусками.
+    @Published var lastSyncDate: Date? = nil {
+        didSet { UserDefaults.standard.set(lastSyncDate, forKey: Keys.lastSyncDate) }
+    }
     @Published var isEnabled: Bool {
         didSet { UserDefaults.standard.set(isEnabled, forKey: Keys.isEnabled) }
     }
@@ -24,6 +28,7 @@ final class GoogleCalendarProvider: ObservableObject, CalendarProvider {
     init(apiClient: GoogleCalendarAPIClient = GoogleCalendarAPIClient()) {
         self.apiClient = apiClient
         self.isEnabled = UserDefaults.standard.bool(forKey: Keys.isEnabled)
+        self.lastSyncDate = UserDefaults.standard.object(forKey: Keys.lastSyncDate) as? Date
         configureSDKIfPossible()
         if let user = signIn.currentUser {
             updateStatus(for: user)
@@ -60,6 +65,7 @@ final class GoogleCalendarProvider: ObservableObject, CalendarProvider {
     }
 
     func signOut() async {
+        lastSyncDate = nil
         signIn.signOut()
         isEnabled = false
         status = .signedOut
@@ -210,6 +216,7 @@ final class GoogleCalendarProvider: ObservableObject, CalendarProvider {
 
     private enum Keys {
         static let isEnabled = "googleCalendar.isEnabled"
+        static let lastSyncDate = "googleCalendar.lastSyncDate"
     }
 }
 

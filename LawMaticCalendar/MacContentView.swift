@@ -52,7 +52,7 @@ struct MacContentView: View {
         .focusedSceneValue(\.calendarViewModel, viewModel)
         .onAppear {
             viewModel.undoManager = undoManager
-            viewModel.startPeriodicSync()
+            viewModel.startAutomaticSync()
         }
         .onChange(of: undoManager) { _, newValue in
             viewModel.undoManager = newValue
@@ -143,24 +143,14 @@ struct MacContentView: View {
                 }
             }
 
-            Button {
-                Task { await viewModel.syncAllProviders() }
-            } label: {
-                if viewModel.isSyncing {
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Синхронизация…")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Label("Синхронизировать", systemImage: "arrow.triangle.2.circlepath")
-                }
+            // Синхронизация идёт сама; на панели виден только её ход, а
+            // обновить вручную можно командой «Вид → Обновить календари» (⌘R).
+            if viewModel.isSyncing {
+                ProgressView()
+                    .controlSize(.small)
+                    .help(viewModel.syncProgressText ?? "Синхронизация…")
+                    .accessibilityLabel(viewModel.syncProgressText ?? "Синхронизация")
             }
-            .help(viewModel.isSyncing ? (viewModel.syncProgressText ?? "Синхронизация…") : syncHelpText)
-            .accessibilityLabel("Синхронизировать")
-            .disabled(viewModel.isSyncing)
 
             Button {
                 isInspectorPresented.toggle()
@@ -215,13 +205,6 @@ struct MacContentView: View {
         }
         .padding(16)
         .frame(width: 360)
-    }
-
-    private var syncHelpText: String {
-        guard let date = viewModel.lastSuccessfulSyncDate else {
-            return "Синхронизировать подключённые календари (⌘R)"
-        }
-        return "Синхронизировать (⌘R). Последний раз: \(date.formatted(date: .omitted, time: .shortened))"
     }
 
     // MARK: - Заголовок
@@ -312,7 +295,7 @@ struct CalendarCommands: Commands {
 
             Divider()
 
-            Button("Синхронизировать") {
+            Button("Обновить календари") {
                 guard let viewModel else { return }
                 Task { await viewModel.syncAllProviders() }
             }

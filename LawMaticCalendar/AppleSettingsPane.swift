@@ -37,6 +37,9 @@ struct AppleSettingsPane: View {
                         }
                     }
                 }
+                if provider.status.isSignedIn {
+                    LastSyncLabel(date: provider.lastSyncDate)
+                }
                 Text("Отозвать системное разрешение можно в Настройках системы → Конфиденциальность и безопасность → Календари.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)

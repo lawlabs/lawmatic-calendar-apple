@@ -37,6 +37,10 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
     private static let feedRulesVersion = 2
 
     @Published private(set) var status: ProviderStatus = .signedOut
+    /// Последняя синхронизация без ошибок; хранится между запусками.
+    @Published var lastSyncDate: Date? = nil {
+        didSet { UserDefaults.standard.set(lastSyncDate, forKey: Keys.lastSyncDate) }
+    }
     @Published var isEnabled: Bool {
         didSet { UserDefaults.standard.set(isEnabled, forKey: Keys.isEnabled) }
     }
@@ -91,6 +95,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
         self.accountName = defaults.string(forKey: Keys.accountName)
         self.allowsWriteBack = defaults.bool(forKey: Keys.allowsWriteBack)
         self.isEnabled = defaults.bool(forKey: Keys.isEnabled)
+        self.lastSyncDate = UserDefaults.standard.object(forKey: Keys.lastSyncDate) as? Date
         self.requiresFullResync = defaults.bool(forKey: Keys.requiresFullResync)
         self.historyHorizonMonths = defaults.object(forKey: Keys.historyHorizonMonths) as? Int ?? Self.defaultHistoryHorizonMonths
 
@@ -170,6 +175,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
     }
 
     func signOut() async {
+        lastSyncDate = nil
         await apiClient.invalidateTokens()
         try? KeychainStore.set("", service: Keys.keychainService, account: Keys.password)
         storedPassword = ""
@@ -361,6 +367,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
         static let keychainService = "com.lawmatic.calendar.legalic"
         static let password = "legalic.password"
         static let isEnabled = "legalic.isEnabled"
+        static let lastSyncDate = "legalic.lastSyncDate"
         static let allowsWriteBack = "legalic.allowsWriteBack"
         static let server = "legalic.server"
         static let login = "legalic.login"

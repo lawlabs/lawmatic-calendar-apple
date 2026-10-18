@@ -8,6 +8,10 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
     let displayName = "Apple Calendar"
 
     @Published private(set) var status: ProviderStatus
+    /// Последняя синхронизация без ошибок; хранится между запусками.
+    @Published var lastSyncDate: Date? = nil {
+        didSet { UserDefaults.standard.set(lastSyncDate, forKey: Keys.lastSyncDate) }
+    }
     @Published var isEnabled: Bool {
         didSet { UserDefaults.standard.set(isEnabled, forKey: Keys.isEnabled) }
     }
@@ -24,6 +28,7 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
         self.eventStore = eventStore
         let hasFullAccess = Self.hasFullAccess
         self.isEnabled = hasFullAccess && UserDefaults.standard.bool(forKey: Keys.isEnabled)
+        self.lastSyncDate = UserDefaults.standard.object(forKey: Keys.lastSyncDate) as? Date
         self.allowsWriteBack = UserDefaults.standard.object(forKey: Keys.allowsWriteBack) as? Bool ?? true
         self.status = hasFullAccess
             ? .signedIn(accountLabel: "Системные календари")
@@ -44,6 +49,7 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
     }
 
     func signOut() async {
+        lastSyncDate = nil
         isEnabled = false
         status = .signedOut
     }
@@ -243,6 +249,7 @@ final class AppleCalendarProvider: ObservableObject, CalendarProvider {
 
     private enum Keys {
         static let isEnabled = "appleCalendar.isEnabled"
+        static let lastSyncDate = "appleCalendar.lastSyncDate"
         static let allowsWriteBack = "appleCalendar.allowsWriteBack"
     }
 }

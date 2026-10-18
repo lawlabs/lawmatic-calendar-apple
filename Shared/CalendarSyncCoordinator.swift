@@ -1,6 +1,10 @@
 import EventKit
 import Foundation
+import Network
 import Observation
+#if os(macOS)
+import AppKit
+#endif
 
 /// Источник провайдеров для синхронизации. Абстракция над `ProviderRegistry`,
 /// чтобы координатор можно было тестировать с mock-провайдерами.
@@ -15,12 +19,22 @@ extension ProviderRegistry: CalendarProviderResolving {}
 /// Оркестрация синхронизации: pull → LWW merge → push, для каждого
 /// включённого провайдера. Состояние (события, календари, очередь удалений)
 /// живёт в `EventRepository`; координатор его читает и изменяет.
+///
+/// Синхронизация идёт сама, как в Календаре Apple:
+/// - локальная правка уходит в свой аккаунт через `uploadDelay` после
+///   сохранения (`scheduleUploadOfLocalChanges()`);
+/// - изменения с серверов подтягиваются при запуске, при возврате в
+///   приложение, раз в `automaticRefreshInterval`, после сна и когда снова
+///   появилась сеть; Apple Calendar — ещё и по уведомлениям EventKit;
+/// - вручную — только «Вид → Обновить календари» (⌘R).
 @Observable
 @MainActor
 final class CalendarSyncCoordinator {
     private(set) var syncingProviderIDs: Set<ProviderID> = []
-    /// Что сейчас делает синхронизация — для индикатора в тулбаре и сайдбаре.
+    /// Что сейчас делает синхронизация — для индикатора на панели инструментов.
     private(set) var progressText: String?
+    /// Ошибки для значка на панели инструментов. Собирается из ошибок
+    /// аккаунтов; «Скрыть» обнуляет его, следующий сбой покажет снова.
     var syncError: IdentifiableMessage?
 
     struct MassDeletionRequest: Equatable {
@@ -35,13 +49,25 @@ final class CalendarSyncCoordinator {
     /// Очередь удалений, которая ждёт подтверждения пользователя.
     private(set) var pendingMassDeletion: MassDeletionRequest?
     @ObservationIgnored private var confirmedMassDeletionProviders: Set<ProviderID> = []
-    /// Время последней полностью успешной синхронизации всех включённых аккаунтов.
-    private(set) var lastSuccessfulSyncDate: Date?
+
+    /// Через сколько после сохранения правка уходит на сервер: серия правок
+    /// подряд (перетаскивание, набор в инспекторе) уходит одним прогоном.
+    @ObservationIgnored var uploadDelay: Duration = .seconds(2)
+    /// Как часто подтягивать изменения, пока приложение открыто.
+    static let automaticRefreshInterval: TimeInterval = 5 * 60
+    /// Черновик нового события в инспекторе: пока его не сохранили, на сервер
+    /// он не уходит.
+    @ObservationIgnored var draftEventID: UUID?
 
     @ObservationIgnored private let repository: EventRepository
     @ObservationIgnored private let providers: any CalendarProviderResolving
-    @ObservationIgnored private var periodicSyncTask: Task<Void, Never>?
-    @ObservationIgnored private var eventStoreChangesTask: Task<Void, Never>?
+    /// Последняя ошибка каждого аккаунта; успешный прогон аккаунта её снимает.
+    @ObservationIgnored private var failures: [ProviderID: String] = [:]
+    /// Аккаунты, которым нужен ещё один проход: правку сохранили, пока шла
+    /// их синхронизация, и в текущий проход она могла не попасть.
+    @ObservationIgnored private var rerunProviderIDs: Set<ProviderID> = []
+    @ObservationIgnored private var uploadTasks: [ProviderID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var automaticTasks: [Task<Void, Never>] = []
 
     /// За сколько до конца окна первичной выборки делать полный ресинк.
     static let syncWindowRefreshThreshold: TimeInterval = 180 * 24 * 3600
@@ -52,6 +78,14 @@ final class CalendarSyncCoordinator {
     }
 
     var isSyncing: Bool { !syncingProviderIDs.isEmpty }
+
+    /// Когда все включённые аккаунты в последний раз прошли синхронизацию
+    /// без ошибок; `nil`, если какой-то ещё не проходил.
+    var lastSuccessfulSyncDate: Date? {
+        let dates = providers.enabledProviders.map(\.lastSyncDate)
+        guard !dates.isEmpty, !dates.contains(nil) else { return nil }
+        return dates.compactMap { $0 }.min()
+    }
 
     // MARK: - Публичные входы
 
@@ -70,8 +104,8 @@ final class CalendarSyncCoordinator {
         confirmedMassDeletionProviders.remove(providerID)
     }
 
+    /// «Обновить календари» (⌘R) и «Повторить»: все включённые аккаунты сейчас.
     func syncAllProviders() async {
-        syncError = nil
         let enabled = providers.enabledProviders
         guard !enabled.isEmpty else {
             syncError = IdentifiableMessage(
@@ -80,84 +114,181 @@ final class CalendarSyncCoordinator {
             )
             return
         }
-        var failures: [String] = []
-        for provider in enabled {
-            do {
-                try await synchronize(provider)
-            } catch {
-                failures.append("\(provider.displayName): \(error.localizedDescription)")
-            }
-        }
-        if !failures.isEmpty {
-            syncError = IdentifiableMessage(
-                title: "Синхронизация завершена с ошибками",
-                message: failures.joined(separator: "\n\n")
-            )
-        } else {
-            lastSuccessfulSyncDate = Date()
-        }
+        await refresh(enabled)
     }
 
     /// Синхронизировать один провайдер (если он включён).
     func sync(providerID: ProviderID, reportErrors: Bool = true) async {
         guard let provider = providers.provider(providerID), provider.isEnabled else { return }
-        if reportErrors { syncError = nil }
-        do {
-            try await synchronize(provider)
-        } catch {
-            guard reportErrors else { return }
-            syncError = IdentifiableMessage(
-                title: provider.displayName,
-                message: error.localizedDescription
-            )
+        _ = try? await run(provider, rerunIfBusy: false, reportErrors: reportErrors)
+    }
+
+    /// Автоматическое обновление: аккаунты, которые не синхронизировались
+    /// дольше `interval` секунд. Без сообщений «включите аккаунт».
+    func refreshStaleProviders(olderThan interval: TimeInterval) async {
+        let now = Date()
+        let stale = providers.enabledProviders.filter { provider in
+            guard let last = provider.lastSyncDate else { return true }
+            return now.timeIntervalSince(last) >= interval
         }
+        await refresh(stale)
     }
 
-    /// Синхронизировать, если включён хотя бы один аккаунт (без сообщения
-    /// «включите аккаунт» — для автоматических запусков).
-    func syncIfEnabled() async {
-        guard !providers.enabledProviders.isEmpty, !isSyncing else { return }
-        await syncAllProviders()
-    }
-
-    /// Автосинк: сразу после запуска и далее каждые `interval`; плюс
-    /// точечный синк Apple Calendar по уведомлению EventKit об изменениях.
-    func startPeriodicSync(interval: Duration = .seconds(15 * 60), initialDelay: Duration = .seconds(2)) {
-        periodicSyncTask?.cancel()
-        periodicSyncTask = Task { [weak self] in
-            try? await Task.sleep(for: initialDelay)
-            while !Task.isCancelled {
-                await self?.syncIfEnabled()
-                try? await Task.sleep(for: interval)
+    /// Локальная правка сохранена: через `uploadDelay` отправить её в свой
+    /// аккаунт, не дожидаясь очередного обновления.
+    func scheduleUploadOfLocalChanges() {
+        for providerID in providerIDsWithLocalChanges() {
+            uploadTasks[providerID]?.cancel()
+            uploadTasks[providerID] = Task { [weak self, uploadDelay] in
+                try? await Task.sleep(for: uploadDelay)
+                guard !Task.isCancelled,
+                      let self,
+                      let provider = self.providers.provider(providerID),
+                      provider.isEnabled
+                else { return }
+                _ = try? await self.run(provider, rerunIfBusy: true, reportErrors: true)
             }
         }
+    }
 
-        eventStoreChangesTask?.cancel()
-        eventStoreChangesTask = Task { [weak self] in
+    /// Автоматическая синхронизация на всё время работы приложения: при
+    /// запуске, раз в `automaticRefreshInterval`, по изменениям EventKit,
+    /// после сна и при появлении сети.
+    func startAutomaticSync() {
+        stopAutomaticSync()
+        let interval = Self.automaticRefreshInterval
+
+        automaticTasks.append(Task { [weak self] in
+            // Первое обновление при запуске, если перед выходом его не было
+            // только что; дальше — устаревшие аккаунты раз в `interval`.
+            try? await Task.sleep(for: .seconds(1))
+            await self?.refreshStaleProviders(olderThan: 30)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled else { return }
+                await self?.refreshStaleProviders(olderThan: interval * 0.8)
+            }
+        })
+
+        automaticTasks.append(Task { [weak self] in
             for await _ in NotificationCenter.default.notifications(named: .EKEventStoreChanged) {
                 guard !Task.isCancelled else { return }
                 // EventKit шлёт серию уведомлений подряд — ждём паузу.
                 try? await Task.sleep(for: .seconds(2))
                 await self?.sync(providerID: .apple, reportErrors: false)
             }
+        })
+
+        automaticTasks.append(Task { [weak self] in
+            var wasOnline = true
+            for await isOnline in Self.networkAvailability() {
+                guard !Task.isCancelled else { return }
+                if isOnline, !wasOnline {
+                    // Сеть вернулась: забрать изменения и отправить правки,
+                    // накопленные без неё.
+                    await self?.refreshStaleProviders(olderThan: 0)
+                }
+                wasOnline = isOnline
+            }
+        })
+
+        #if os(macOS)
+        automaticTasks.append(Task { [weak self] in
+            let center = NSWorkspace.shared.notificationCenter
+            for await _ in center.notifications(named: NSWorkspace.didWakeNotification) {
+                guard !Task.isCancelled else { return }
+                // После сна сеть поднимается не сразу.
+                try? await Task.sleep(for: .seconds(5))
+                await self?.refreshStaleProviders(olderThan: 60)
+            }
+        })
+        #endif
+    }
+
+    func stopAutomaticSync() {
+        automaticTasks.forEach { $0.cancel() }
+        automaticTasks = []
+    }
+
+    /// Возврат в приложение: подтянуть изменения, если давно не синхронизировались.
+    func handleDidBecomeActive() {
+        Task { await refreshStaleProviders(olderThan: 2 * 60) }
+    }
+
+    // MARK: - Прогоны
+
+    /// Синхронизирует аккаунты по очереди и собирает их ошибки в `syncError`.
+    private func refresh(_ list: [any CalendarProvider]) async {
+        for provider in list {
+            _ = try? await run(provider, rerunIfBusy: false, reportErrors: true)
         }
     }
 
-    func stopPeriodicSync() {
-        periodicSyncTask?.cancel()
-        periodicSyncTask = nil
-        eventStoreChangesTask?.cancel()
-        eventStoreChangesTask = nil
+    /// Один прогон аккаунта. Если аккаунт уже синхронизируется, обновление
+    /// пропускается, а отправка правки (`rerunIfBusy`) ставит ещё один проход
+    /// сразу после текущего.
+    /// - Returns: прогон выполнен, а не пропущен или отложен.
+    @discardableResult
+    private func run(
+        _ provider: any CalendarProvider,
+        rerunIfBusy: Bool,
+        reportErrors: Bool
+    ) async throws -> Bool {
+        // Синк можно запустить таймером, правкой, уведомлением и из меню;
+        // параллельные прогоны одного провайдера перемешали бы мутации
+        // `events` между await.
+        guard !syncingProviderIDs.contains(provider.id) else {
+            if rerunIfBusy { rerunProviderIDs.insert(provider.id) }
+            return false
+        }
+        repeat {
+            rerunProviderIDs.remove(provider.id)
+            do {
+                try await synchronize(provider)
+                provider.lastSyncDate = Date()
+                failures[provider.id] = nil
+            } catch {
+                if reportErrors {
+                    failures[provider.id] = "\(provider.displayName): \(error.localizedDescription)"
+                }
+                updateSyncError()
+                throw error
+            }
+        } while rerunProviderIDs.contains(provider.id)
+        updateSyncError()
+        return true
     }
 
-    /// Возврат на передний план: подтянуть изменения, если давно не синкались.
-    func handleDidBecomeActive(staleAfter: TimeInterval = 5 * 60) {
-        guard let last = lastSuccessfulSyncDate else {
-            Task { await syncIfEnabled() }
+    private func updateSyncError() {
+        guard !failures.isEmpty else {
+            syncError = nil
             return
         }
-        if Date().timeIntervalSince(last) > staleAfter {
-            Task { await syncIfEnabled() }
+        let messages = ProviderID.allCases.compactMap { failures[$0] }
+        syncError = IdentifiableMessage(
+            title: messages.count == 1 ? "Ошибка синхронизации" : "Синхронизация завершена с ошибками",
+            message: messages.joined(separator: "\n\n")
+        )
+    }
+
+    /// Аккаунты, в которые есть что отправить: правки и удаления.
+    private func providerIDsWithLocalChanges() -> Set<ProviderID> {
+        var providerIDs = Set(repository.pendingDeletions.map(\.remoteRef.providerID))
+        for event in repository.events where event.syncState == .pendingUpload && event.id != draftEventID {
+            if let providerID = event.externalProvider { providerIDs.insert(providerID) }
+        }
+        return providerIDs
+    }
+
+    /// `true`, когда есть сеть, при каждом изменении её состояния.
+    private nonisolated static func networkAvailability() -> AsyncStream<Bool> {
+        AsyncStream { continuation in
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { path in
+                continuation.yield(path.status == .satisfied)
+            }
+            continuation.onTermination = { _ in monitor.cancel() }
+            monitor.start(queue: DispatchQueue(label: "LawMaticCalendar.network"))
         }
     }
 
@@ -165,9 +296,6 @@ final class CalendarSyncCoordinator {
 
     private func synchronize(_ provider: any CalendarProvider) async throws {
         guard provider.isEnabled else { throw ProviderError.providerDisabled(provider.id) }
-        // Синк можно запустить из тулбара, сайдбара и меню; параллельные
-        // прогоны одного провайдера перемешали бы мутации `events` между await.
-        guard !syncingProviderIDs.contains(provider.id) else { return }
         repository.flushPendingSaves()
         syncingProviderIDs.insert(provider.id)
         progressText = "\(provider.displayName): список календарей…"
@@ -387,7 +515,7 @@ final class CalendarSyncCoordinator {
         remoteCalendars: [RemoteCalendar]
     ) async throws {
         let eventIDs = repository.events.filter {
-            $0.externalProvider == provider.id && $0.syncState == .pendingUpload
+            $0.externalProvider == provider.id && $0.syncState == .pendingUpload && $0.id != draftEventID
         }.map(\.id)
         for eventID in eventIDs {
             guard let index = repository.events.firstIndex(where: { $0.id == eventID }),

@@ -30,6 +30,9 @@ struct GoogleSettingsPane: View {
                         .disabled(!provider.isConfigured)
                     }
                 }
+                if provider.status.isSignedIn {
+                    LastSyncLabel(date: provider.lastSyncDate)
+                }
                 if let message = provider.configurationMessage {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .font(.caption)

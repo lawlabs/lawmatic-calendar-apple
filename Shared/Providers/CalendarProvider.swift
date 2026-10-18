@@ -20,6 +20,10 @@ protocol CalendarProvider: AnyObject {
     /// курсоры и после успешного полного чтения зовёт `fullResyncDidComplete()`.
     var requiresFullResync: Bool { get }
     func fullResyncDidComplete()
+
+    /// Когда аккаунт в последний раз прошёл синхронизацию без ошибок.
+    /// Координатор по нему решает, пора ли обновляться, настройки его показывают.
+    var lastSyncDate: Date? { get set }
 }
 
 extension CalendarProvider {

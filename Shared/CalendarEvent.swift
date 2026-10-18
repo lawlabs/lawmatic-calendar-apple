@@ -20,6 +20,11 @@ struct CalendarEvent: Identifiable, Codable, Equatable, Sendable {
     /// Запись нельзя менять из приложения независимо от прав календаря
     /// (например, экземпляр повторяющегося события Apple Calendar).
     var isReadOnly: Bool
+    /// База трёхстороннего слияния: последняя версия события на сервере,
+    /// которую видело приложение. Есть только у события с неотправленной
+    /// правкой — у «чистого» база совпадает с ним самим. По ней видно, какие
+    /// поля поменял пользователь, и правка других полей на сервере не теряется.
+    var remoteBase: EventContent?
 
     init(
         id: UUID = UUID(),
@@ -38,7 +43,8 @@ struct CalendarEvent: Identifiable, Codable, Equatable, Sendable {
         localUpdatedAt: Date = Date(),
         remoteUpdatedAt: Date? = nil,
         syncState: EventSyncState = .clean,
-        isReadOnly: Bool = false
+        isReadOnly: Bool = false,
+        remoteBase: EventContent? = nil
     ) {
         self.id = id
         self.title = title
@@ -57,12 +63,13 @@ struct CalendarEvent: Identifiable, Codable, Equatable, Sendable {
         self.remoteUpdatedAt = remoteUpdatedAt
         self.syncState = syncState
         self.isReadOnly = isReadOnly
+        self.remoteBase = remoteBase
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, startDate, endDate, isAllDay, notes, location, calendarId
         case externalId, externalProvider, externalCalendarId, externalETag, pendingCreateRemoteId
-        case localUpdatedAt, remoteUpdatedAt, syncState, isReadOnly
+        case localUpdatedAt, remoteUpdatedAt, syncState, isReadOnly, remoteBase
     }
 
     /// Ручное декодирование ради обратной совместимости файлов: новые
@@ -86,7 +93,37 @@ struct CalendarEvent: Identifiable, Codable, Equatable, Sendable {
         remoteUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .remoteUpdatedAt)
         syncState = try container.decodeIfPresent(EventSyncState.self, forKey: .syncState) ?? .clean
         isReadOnly = try container.decodeIfPresent(Bool.self, forKey: .isReadOnly) ?? false
+        remoteBase = try container.decodeIfPresent(EventContent.self, forKey: .remoteBase)
     }
+
+    /// Поля, которые правят и пользователь, и сервер.
+    var content: EventContent {
+        get {
+            EventContent(
+                title: title, notes: notes, location: location,
+                startDate: startDate, endDate: endDate, isAllDay: isAllDay
+            )
+        }
+        set {
+            title = newValue.title
+            notes = newValue.notes
+            location = newValue.location
+            startDate = newValue.startDate
+            endDate = newValue.endDate
+            isAllDay = newValue.isAllDay
+        }
+    }
+}
+
+/// Содержимое события, которое синхронизируется: по этим полям идёт
+/// трёхстороннее слияние локальной правки с версией с сервера.
+struct EventContent: Codable, Equatable, Sendable {
+    var title: String
+    var notes: String
+    var location: String
+    var startDate: Date
+    var endDate: Date
+    var isAllDay: Bool
 }
 
 extension CalendarEvent {

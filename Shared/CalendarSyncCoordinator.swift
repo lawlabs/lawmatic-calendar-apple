@@ -592,15 +592,35 @@ final class CalendarSyncCoordinator {
                 repository.events[index].pendingCreateRemoteId = provider.proposedRemoteEventID(for: repository.events[index])
                 try repository.saveOrThrow(.events)
             }
-            let pushed = try await provider.pushUpsert(localEvent: repository.events[index], to: remoteCalendar)
+            let sent = repository.events[index]
+            let pushed = try await provider.pushUpsert(localEvent: sent, to: remoteCalendar)
             guard let currentIndex = repository.events.firstIndex(where: { $0.id == eventID }) else { continue }
+            let current = repository.events[currentIndex]
+            guard current.externalProvider == sent.externalProvider,
+                  current.externalCalendarId == sent.externalCalendarId
+            else {
+                // Пока шла отправка, событие перенесли в другой календарь:
+                // только что созданная на сервере копия больше не нужна.
+                if sent.externalId == nil {
+                    repository.pendingDeletions.append(PendingEventDeletion(remoteRef: pushed.remoteRef, etag: pushed.etag))
+                    repository.save(.pendingDeletions)
+                }
+                continue
+            }
             repository.events[currentIndex].externalProvider = pushed.remoteRef.providerID
             repository.events[currentIndex].externalCalendarId = pushed.remoteRef.remoteCalendarID
             repository.events[currentIndex].externalId = pushed.remoteRef.remoteEventID
             repository.events[currentIndex].externalETag = pushed.etag
             repository.events[currentIndex].pendingCreateRemoteId = nil
             repository.events[currentIndex].remoteUpdatedAt = pushed.updatedAt
-            repository.events[currentIndex].syncState = .clean
+            if current.content == sent.content {
+                repository.events[currentIndex].syncState = .clean
+                repository.events[currentIndex].remoteBase = nil
+            } else {
+                // Правку, сделанную во время отправки, отправленной не считаем:
+                // она уйдёт следующим проходом, а база — то, что уже на сервере.
+                repository.events[currentIndex].remoteBase = sent.content
+            }
             repository.save(.events)
         }
     }

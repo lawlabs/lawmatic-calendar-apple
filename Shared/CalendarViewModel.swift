@@ -478,6 +478,7 @@ final class CalendarViewModel {
             changed.pendingCreateRemoteId = nil
             changed.remoteUpdatedAt = nil
             changed.syncState = .clean
+            changed.remoteBase = nil
             return changed
         }
 
@@ -492,6 +493,13 @@ final class CalendarViewModel {
         changed.externalETag = isSameRemoteEvent ? previous?.externalETag : nil
         changed.pendingCreateRemoteId = isSameRemoteEvent ? previous?.pendingCreateRemoteId : nil
         changed.remoteUpdatedAt = isSameRemoteEvent ? previous?.remoteUpdatedAt : nil
+        // База слияния — последняя версия сервера. У события без
+        // неотправленных правок это оно само, иначе она уже сохранена.
+        if isSameRemoteEvent, let previous, previous.externalId != nil {
+            changed.remoteBase = previous.syncState == .clean ? previous.content : previous.remoteBase
+        } else {
+            changed.remoteBase = nil
+        }
         changed.localUpdatedAt = Date()
         changed.syncState = .pendingUpload
         return changed

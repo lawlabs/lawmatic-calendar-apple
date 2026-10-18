@@ -95,6 +95,7 @@ enum CalendarSyncMerger {
                 events[index].externalETag = nil
                 events[index].pendingCreateRemoteId = nil
                 events[index].remoteUpdatedAt = deletion.updatedAt
+                events[index].remoteBase = nil
                 continue
             }
             removedIndices.insert(index)
@@ -103,13 +104,8 @@ enum CalendarSyncMerger {
         for remote in batch.upserts where remote.remoteRef.providerID == providerID && remote.remoteRef.remoteCalendarID == remoteCalendarID {
             if let index = localIndex(for: remote.remoteRef.remoteEventID) {
                 let local = events[index]
-                if local.syncState == .pendingUpload && local.localUpdatedAt > remote.updatedAt {
-                    // Локальная версия побеждает, но для безопасного If-Match
-                    // используем последнюю увиденную версию сервера.
-                    events[index].externalId = remote.remoteRef.remoteEventID
-                    events[index].externalETag = remote.etag
-                    events[index].pendingCreateRemoteId = nil
-                    events[index].remoteUpdatedAt = remote.updatedAt
+                if local.syncState == .pendingUpload {
+                    events[index] = mergedPendingEvent(local, with: remote)
                     continue
                 }
                 events[index] = localEvent(from: remote, calendarID: localCalendar.id, id: local.id)
@@ -146,6 +142,88 @@ enum CalendarSyncMerger {
         }
         result.append(contentsOf: appended)
         return result
+    }
+
+    /// Трёхстороннее слияние содержимого. База — последняя версия сервера,
+    /// которую видело приложение: поле, которое менял только один, берётся
+    /// у него, поле, которое поменяли оба, — у более поздней правки. Время
+    /// (начало, конец, «весь день») сливается целиком, чтобы конец не
+    /// оказался раньше начала. Без базы (старые данные) — запись целиком у
+    /// более поздней правки, как раньше.
+    static func mergeContent(
+        local: EventContent,
+        localUpdatedAt: Date,
+        remote: EventContent,
+        remoteUpdatedAt: Date,
+        base: EventContent?
+    ) -> EventContent {
+        let localIsLater = localUpdatedAt > remoteUpdatedAt
+        guard let base else { return localIsLater ? local : remote }
+
+        func choose<Value: Equatable>(_ local: Value, _ remote: Value, _ base: Value) -> Value {
+            if local == base { return remote }
+            if remote == base { return local }
+            return localIsLater ? local : remote
+        }
+
+        var merged = remote
+        merged.title = choose(local.title, remote.title, base.title)
+        merged.notes = choose(local.notes, remote.notes, base.notes)
+        merged.location = choose(local.location, remote.location, base.location)
+        let schedule = choose(Schedule(local), Schedule(remote), Schedule(base))
+        merged.startDate = schedule.start
+        merged.endDate = schedule.end
+        merged.isAllDay = schedule.isAllDay
+        return merged
+    }
+
+    private struct Schedule: Equatable {
+        let start: Date
+        let end: Date
+        let isAllDay: Bool
+
+        init(_ content: EventContent) {
+            start = content.startDate
+            end = content.endDate
+            isAllDay = content.isAllDay
+        }
+    }
+
+    /// Новая версия с сервера для события с неотправленной правкой: слить
+    /// по полям и отправить то, что осталось от правки, поверх этой версии.
+    private static func mergedPendingEvent(_ local: CalendarEvent, with remote: ParsedRemoteEvent) -> CalendarEvent {
+        let remoteContent = content(of: remote)
+        var merged = local
+        merged.content = mergeContent(
+            local: local.content,
+            localUpdatedAt: local.localUpdatedAt,
+            remote: remoteContent,
+            remoteUpdatedAt: remote.updatedAt,
+            base: local.remoteBase
+        )
+        // Отправлять дальше от этой версии: If-Match/base_usn и база слияния —
+        // последняя увиденная версия сервера.
+        merged.externalId = remote.remoteRef.remoteEventID
+        merged.externalETag = remote.etag
+        merged.pendingCreateRemoteId = nil
+        merged.remoteUpdatedAt = remote.updatedAt
+        merged.isReadOnly = remote.isReadOnly
+        if merged.content == remoteContent {
+            // Правка совпала с сервером или проиграла целиком — отправлять нечего.
+            merged.syncState = .clean
+            merged.localUpdatedAt = remote.updatedAt
+            merged.remoteBase = nil
+        } else {
+            merged.remoteBase = remoteContent
+        }
+        return merged
+    }
+
+    private static func content(of remote: ParsedRemoteEvent) -> EventContent {
+        EventContent(
+            title: remote.title, notes: remote.notes, location: remote.location,
+            startDate: remote.start, endDate: remote.end, isAllDay: remote.isAllDay
+        )
     }
 
     private static func localEvent(

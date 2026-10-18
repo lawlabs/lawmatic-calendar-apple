@@ -28,6 +28,7 @@ final class MockCalendarProvider: ObservableObject, CalendarProvider {
     private(set) var concurrentFetches = 0
     private(set) var maxConcurrentFetches = 0
     var fetchDelay: Duration = .zero
+    var pushDelay: Duration = .zero
 
     init(id: ProviderID = .google, displayName: String = "Mock") {
         self.id = id
@@ -60,6 +61,9 @@ final class MockCalendarProvider: ObservableObject, CalendarProvider {
     }
 
     func pushUpsert(localEvent: CalendarEvent, to remoteCalendar: RemoteCalendar) async throws -> PushedRemoteEvent {
+        if pushDelay > .zero {
+            try? await Task.sleep(for: pushDelay)
+        }
         pushedUpserts.append(localEvent)
         if let pushUpsertHandler {
             return try pushUpsertHandler(localEvent, remoteCalendar)

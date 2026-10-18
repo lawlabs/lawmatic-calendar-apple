@@ -44,16 +44,22 @@ struct ContentView: View {
         }
         .sheet(isPresented: $isSettingsPresented) {
             NavigationStack {
-                SettingsView()
-                    .navigationTitle("Настройки")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Готово") {
-                                isSettingsPresented = false
-                            }
+                Group {
+                    if DemoMode.usesUserAccounts {
+                        SettingsView()
+                    } else {
+                        AccountsUnavailableView()
+                    }
+                }
+                .navigationTitle("Настройки")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Готово") {
+                            isSettingsPresented = false
                         }
                     }
+                }
             }
         }
         .alert(item: $viewModel.storageError) { error in

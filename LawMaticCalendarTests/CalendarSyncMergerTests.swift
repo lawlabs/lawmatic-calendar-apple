@@ -174,7 +174,7 @@ final class CalendarSyncMergerTests: XCTestCase {
         let store = InMemoryCalendarStore(
             snapshot: CalendarStoreSnapshot(calendars: [calendar], events: [event])
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
 
         viewModel.deleteEvent(event)
 

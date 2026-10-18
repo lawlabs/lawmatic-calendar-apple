@@ -74,13 +74,20 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
     }
 
     private let apiClient: LegalicAPIClient
+    /// Пароль, сохранённый в Keychain после успешного входа. Читается из
+    /// Keychain один раз, при создании провайдера: на macOS каждое чтение
+    /// может показать запрос доступа к связке ключей. Дальше копия меняется
+    /// вместе с Keychain — при входе и выходе.
+    private var storedPassword: String
 
     init(apiClient: LegalicAPIClient = LegalicAPIClient()) {
         self.apiClient = apiClient
         let defaults = UserDefaults.standard
         self.server = defaults.string(forKey: Keys.server).flatMap { $0.isEmpty ? nil : $0 } ?? Self.defaultServer
         self.login = defaults.string(forKey: Keys.login) ?? ""
-        self.password = KeychainStore.string(service: Keys.keychainService, account: Keys.password) ?? ""
+        let storedPassword = KeychainStore.string(service: Keys.keychainService, account: Keys.password) ?? ""
+        self.storedPassword = storedPassword
+        self.password = storedPassword
         self.accountName = defaults.string(forKey: Keys.accountName)
         self.allowsWriteBack = defaults.bool(forKey: Keys.allowsWriteBack)
         self.isEnabled = defaults.bool(forKey: Keys.isEnabled)
@@ -110,10 +117,6 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
         !server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !login.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !password.isEmpty
-    }
-
-    private var storedPassword: String {
-        KeychainStore.string(service: Keys.keychainService, account: Keys.password) ?? ""
     }
 
     private var accountLabel: String {
@@ -155,6 +158,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
             let account = try await apiClient.signIn(server: url, login: login, password: password)
             guard account.isActive else { throw LegalicAPIError.accountDeactivated }
             try KeychainStore.set(password, service: Keys.keychainService, account: Keys.password)
+            storedPassword = password
             accountName = account.fullName
             status = .signedIn(accountLabel: accountLabel)
             isEnabled = true
@@ -168,6 +172,7 @@ final class LegalicProvider: ObservableObject, CalendarProvider {
     func signOut() async {
         await apiClient.invalidateTokens()
         try? KeychainStore.set("", service: Keys.keychainService, account: Keys.password)
+        storedPassword = ""
         password = ""
         accountName = nil
         isEnabled = false

@@ -5,8 +5,9 @@ import SwiftUI
 /// Демо-режим для показа и скриншотов: запуск с аргументами
 /// `-demo 1 [-date 2026-09-23] [-mode week] [-colorScheme dark]`.
 ///
-/// Данные — неделя демонстрационных событий в памяти, провайдеры выключены,
-/// на диск ничего не пишется, настоящие календари пользователя не трогаются.
+/// Данные — неделя демонстрационных событий в памяти, провайдеры не
+/// создаются, на диск ничего не пишется, настоящие календари пользователя и
+/// связка ключей не трогаются.
 enum DemoMode {
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: "demo")
@@ -58,10 +59,42 @@ enum DemoMode {
         return viewModel
     }
 
-    /// Обычный или демо-VM в зависимости от аргументов запуска.
+    /// Приложение запущено как хост юнит-тестов (`xcodebuild test`). Тесты
+    /// создают свои модели с заглушками, а окну приложения незачем открывать
+    /// настоящие календари, связку ключей и синхронизацию.
+    static var isTestHost: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
+    /// Можно ли подключать настоящие аккаунты: провайдеры, Keychain,
+    /// синхронизацию. Нельзя в демо-режиме и при запуске для тестов.
+    static var usesUserAccounts: Bool {
+        !isEnabled && !isTestHost
+    }
+
+    /// Обычный, демо- или пустой VM в зависимости от того, как запущено приложение.
     @MainActor
     static func makeAppViewModel() -> CalendarViewModel {
-        isEnabled ? makeViewModel() : CalendarViewModel()
+        if isEnabled {
+            return makeViewModel()
+        }
+        if isTestHost {
+            return CalendarViewModel(store: InMemoryCalendarStore(), providers: NoProviders())
+        }
+        return CalendarViewModel()
+    }
+}
+
+/// Вместо настроек аккаунтов в демо-режиме и при запуске для тестов:
+/// настоящие провайдеры не создаются, поэтому Keychain не читается.
+struct AccountsUnavailableView: View {
+    var body: some View {
+        ContentUnavailableView(
+            "Аккаунты не подключены",
+            systemImage: "person.crop.circle.badge.xmark",
+            description: Text("В демо-режиме календари и аккаунты пользователя не используются.")
+        )
+        .frame(minWidth: 420, minHeight: 260)
     }
 }
 

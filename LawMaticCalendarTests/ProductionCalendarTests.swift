@@ -70,7 +70,7 @@ final class ProductionCalendarTests: XCTestCase {
     }
 
     func testViewModelPrefersOverrideAndRestoresTheCatalog() throws {
-        let viewModel = CalendarViewModel(store: InMemoryCalendarStore())
+        let viewModel = CalendarViewModel(store: InMemoryCalendarStore(), providers: MockProviderRegistry([]))
         let holiday = try currentDate(2026, 11, 4)
         XCTAssertEqual(viewModel.dayInfo(on: holiday)?.kind, .holiday)
         viewModel.selectedDate = holiday

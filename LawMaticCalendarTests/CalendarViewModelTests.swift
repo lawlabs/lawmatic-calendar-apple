@@ -10,7 +10,7 @@ final class CalendarViewModelTests: XCTestCase {
                 events: []
             )
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
 
         let calendarID = try XCTUnwrap(viewModel.calendars.first?.id)
         let startDate = Date()
@@ -37,7 +37,7 @@ final class CalendarViewModelTests: XCTestCase {
                 events: []
             )
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
         let calendar = try XCTUnwrap(viewModel.calendars.first)
 
         viewModel.toggleCalendarVisibility(calendar)
@@ -53,7 +53,7 @@ final class CalendarViewModelTests: XCTestCase {
                 events: []
             )
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
 
         viewModel.createNewEvent(referenceDate: Date())
 
@@ -70,7 +70,7 @@ final class CalendarViewModelTests: XCTestCase {
                 events: []
             )
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
 
         viewModel.createNewEvent(referenceDate: Date())
         let draftID = try XCTUnwrap(viewModel.selectedEvent?.id)
@@ -89,7 +89,7 @@ final class CalendarViewModelTests: XCTestCase {
                 events: []
             )
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
         let calendar = Calendar.current
         let start = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: Date())!
         let end = calendar.date(bySettingHour: 11, minute: 30, second: 0, of: Date())!
@@ -117,7 +117,7 @@ final class CalendarViewModelTests: XCTestCase {
                 events: [existingEvent]
             )
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
 
         viewModel.createNewEvent(referenceDate: Date())
         let draftID = try XCTUnwrap(viewModel.selectedEvent?.id)
@@ -135,7 +135,7 @@ final class CalendarViewModelTests: XCTestCase {
                 events: []
             )
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
 
         viewModel.createNewEvent(referenceDate: Date())
         let draft = try XCTUnwrap(viewModel.selectedEvent)
@@ -171,7 +171,7 @@ final class CalendarViewModelTests: XCTestCase {
                 events: [existingEvent]
             )
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
 
         viewModel.selectEvent(existingEvent)
         viewModel.clearSelection()
@@ -188,7 +188,7 @@ final class CalendarViewModelTests: XCTestCase {
                 events: []
             )
         )
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
 
         viewModel.createNewEvent(referenceDate: Date())
         let draftID = try XCTUnwrap(viewModel.selectedEvent?.id)
@@ -208,7 +208,8 @@ final class CalendarViewModelTests: XCTestCase {
                     calendars: CalendarSeedData.defaultCalendars(),
                     events: []
                 )
-            )
+            ),
+            providers: MockProviderRegistry([])
         )
         let calendar = Calendar.current
         let lateStart = calendar.date(bySettingHour: 23, minute: 45, second: 0, of: Date())!
@@ -232,7 +233,7 @@ final class CalendarViewModelEventIndexTests: XCTestCase {
                 events: events
             )
         )
-        return (CalendarViewModel(store: store, saveDebounce: .seconds(60)), store)
+        return (CalendarViewModel(store: store, providers: MockProviderRegistry([]), saveDebounce: .seconds(60)), store)
     }
 
     func testMultiDayEventAppearsOnEveryCoveredDayRegardlessOfQueryTime() throws {
@@ -317,7 +318,7 @@ final class CalendarViewModelPersistenceTests: XCTestCase {
                 events: events
             )
         )
-        return (CalendarViewModel(store: store, saveDebounce: .seconds(60)), store)
+        return (CalendarViewModel(store: store, providers: MockProviderRegistry([]), saveDebounce: .seconds(60)), store)
     }
 
     private func makeEvent() -> CalendarEvent {
@@ -402,7 +403,7 @@ final class CalendarViewModelUndoTests: XCTestCase {
         let store = InMemoryCalendarStore(
             snapshot: CalendarStoreSnapshot(calendars: calendars, events: events)
         )
-        let viewModel = CalendarViewModel(store: store, saveDebounce: .seconds(60))
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]), saveDebounce: .seconds(60))
         let undoManager = UndoManager()
         viewModel.undoManager = undoManager
         return (viewModel, store, undoManager)
@@ -475,7 +476,7 @@ final class CalendarViewModelUndoTests: XCTestCase {
         let store = InMemoryCalendarStore(
             snapshot: CalendarStoreSnapshot(calendars: calendars, events: [event])
         )
-        let viewModel = CalendarViewModel(store: store, saveDebounce: .seconds(60))
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]), saveDebounce: .seconds(60))
         let undoManager = UndoManager()
         viewModel.undoManager = undoManager
 

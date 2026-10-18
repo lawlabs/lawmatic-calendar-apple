@@ -28,7 +28,13 @@ struct LawMaticCalendarApp: App {
         }
 
         Settings {
-            SettingsView()
+            // SettingsView создаёт настоящие провайдеры, а LEGALIC при этом
+            // читает пароль из Keychain — в демо и в тестах этого не нужно.
+            if DemoMode.usesUserAccounts {
+                SettingsView()
+            } else {
+                AccountsUnavailableView()
+            }
         }
     }
 }

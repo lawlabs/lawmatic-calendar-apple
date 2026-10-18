@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class CalendarDayPresentationTests: XCTestCase {
     func testDisplayOptionsHaveIndependentDefaultsAndReachKalends() {
-        let viewModel = CalendarViewModel(store: InMemoryCalendarStore())
+        let viewModel = CalendarViewModel(store: InMemoryCalendarStore(), providers: MockProviderRegistry([]))
         XCTAssertTrue(viewModel.kalendsDayConfiguration.showWeekends)
         XCTAssertTrue(viewModel.kalendsDayConfiguration.highlightWeekends)
         XCTAssertTrue(viewModel.kalendsDayConfiguration.highlightHolidays)
@@ -25,7 +25,7 @@ final class CalendarDayPresentationTests: XCTestCase {
     }
 
     func testClassificationUpdatesAndRemovalReachExistingConfiguration() throws {
-        let viewModel = CalendarViewModel(store: InMemoryCalendarStore())
+        let viewModel = CalendarViewModel(store: InMemoryCalendarStore(), providers: MockProviderRegistry([]))
         let calendar = Calendar.current
         let saturday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 19)))
         let afternoon = try XCTUnwrap(calendar.date(bySettingHour: 15, minute: 30, second: 0, of: saturday))
@@ -53,7 +53,7 @@ final class CalendarDayPresentationTests: XCTestCase {
 
     func testDisplayOptionsAndDayInfoLeaveEventsAndStorageAlone() throws {
         let store = InMemoryCalendarStore(snapshot: CalendarSeedData.previewSnapshot())
-        let viewModel = CalendarViewModel(store: store)
+        let viewModel = CalendarViewModel(store: store, providers: MockProviderRegistry([]))
         let originalEvents = viewModel.events
         let persistedEvents = try store.loadEvents()
         viewModel.showWeekends = false
@@ -66,7 +66,7 @@ final class CalendarDayPresentationTests: XCTestCase {
     }
 
     func testKalendsProviderParticipatesInObservation() {
-        let viewModel = CalendarViewModel(store: InMemoryCalendarStore())
+        let viewModel = CalendarViewModel(store: InMemoryCalendarStore(), providers: MockProviderRegistry([]))
         let configuration = viewModel.kalendsDayConfiguration
         let day = Date()
         let changed = expectation(description: "Day classification invalidates the view")
